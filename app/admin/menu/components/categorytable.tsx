@@ -29,6 +29,7 @@ type MongoObject = {
 type CategoryRow = {
   category: Category;
   categoryId: string;
+  deleteId: string;
   storeId: string;
   storeName: string;
   productsCount: number;
@@ -47,17 +48,29 @@ function getItemId(item: unknown, fallback: string) {
     const obj = item as MongoObject;
 
     return String(
-      obj.storeConfigId ||
-        obj.configId ||
-        obj._id ||
+      obj._id ||
         obj.id ||
         obj.categoryId ||
         obj.slug ||
         fallback
-    );
+    ).trim();
   }
 
   return fallback;
+}
+
+function getCategoryDeleteId(item: unknown) {
+  if (typeof item === "object" && item !== null) {
+    const obj = item as MongoObject;
+
+    return String(
+      obj.storeConfigId ||
+        obj.configId ||
+        ""
+    ).trim();
+  }
+
+  return "";
 }
 
 function getTextValue(value: unknown, fallback = "") {
@@ -164,6 +177,7 @@ function productBelongsToCategory(product: Product, category: Category) {
     _id?: string;
     id?: string;
     slug?: string;
+    categoryId?: string;
   };
 
   const productCategoryValues = [
@@ -175,6 +189,7 @@ function productBelongsToCategory(product: Product, category: Category) {
     .filter(Boolean);
 
   const categoryValues = [
+    categoryObj.categoryId,
     categoryObj._id,
     categoryObj.id,
     categoryObj.name,
@@ -271,6 +286,7 @@ function buildGroupedCategories(
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
     .forEach((category, index) => {
       const categoryId = getItemId(category, `${category.name}-${index}`);
+      const deleteId = getCategoryDeleteId(category);
 
       const key = String(category.name || "untitled-category")
         .trim()
@@ -283,6 +299,7 @@ function buildGroupedCategories(
       const row: CategoryRow = {
         category,
         categoryId,
+        deleteId,
         storeId,
         storeName,
         productsCount,
@@ -403,7 +420,6 @@ export default function CategoryTable({
 }) {
   const [currentPage, setCurrentPage] = useState(1);
 
-  // all filter view
   const isAllStoresView = hideEdit || hideActions;
 
   const groupedCategories = useMemo(() => {
@@ -481,9 +497,18 @@ export default function CategoryTable({
                       <div className="flex flex-wrap gap-2">
                         {group.rows.map((row, rowIndex) => (
                           <StoreDeleteBadge
-                            key={`${group.key}-${row.categoryId}-${row.storeId}-${rowIndex}`}
+                            key={`${group.key}-${row.deleteId || row.categoryId}-${row.storeId}-${rowIndex}`}
                             storeName={row.storeName}
-                            onDelete={() => onDelete(row.categoryId)}
+                            onDelete={() => {
+                              if (!row.deleteId) {
+                                alert(
+                                  `Store config ID missing for ${row.storeName}. Please refresh data or check categories API.`
+                                );
+                                return;
+                              }
+
+                              onDelete(row.deleteId);
+                            }}
                           />
                         ))}
                       </div>
@@ -496,6 +521,7 @@ export default function CategoryTable({
                     `${category.name}-${startIndex + index}`
                   );
 
+                  const deleteId = getCategoryDeleteId(category);
                   const storeName = getStoreName(stores, category);
 
                   const categoryProductsCount = getCategoryProductsCount(
@@ -506,7 +532,7 @@ export default function CategoryTable({
 
                   return (
                     <tr
-                      key={`${categoryId}-${getItemStoreId(category) || storeName}-${startIndex + index}`}
+                      key={`${deleteId || categoryId}-${getItemStoreId(category) || storeName}-${startIndex + index}`}
                       className="transition hover:bg-green-50/50"
                     >
                       <td className="px-5 py-5">
@@ -532,7 +558,16 @@ export default function CategoryTable({
                       <td className="px-5 py-5">
                         <RowActionButtons
                           onEdit={() => onEdit(category)}
-                          onDelete={() => onDelete(categoryId)}
+                          onDelete={() => {
+                            if (!deleteId) {
+                              alert(
+                                `Store config ID missing for ${storeName}. Please refresh data or check categories API.`
+                              );
+                              return;
+                            }
+
+                            onDelete(deleteId);
+                          }}
                         />
                       </td>
                     </tr>

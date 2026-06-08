@@ -1146,24 +1146,47 @@ export function useMenuCrud() {
   };
 
   const deleteCategory = async (id: string) => {
-    const oldCategories = categories;
-    const cleanId = String(id || "").trim();
+  const oldCategories = categories;
+  const cleanId = String(id || "").trim();
 
-    if (!cleanId) {
-      throw new Error("Missing category ID for delete");
-    }
+  if (!cleanId) {
+    throw new Error("Missing category ID for delete");
+  }
 
-    setCategories((prev) =>
-      prev.filter((item) => !getCategoryDeleteIds(item).includes(cleanId))
+  // Instant frontend remove
+  setCategories((prev) =>
+    prev.filter((item: any) => {
+      const itemIds = [
+        getMongoId(item),
+        item.storeConfigId,
+        item.configId,
+        item._id,
+        item.id,
+        item.categoryId,
+        item.slug,
+        item.name,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+      return !itemIds.includes(cleanId);
+    })
+  );
+
+  try {
+    await apiDelete("categories", cleanId);
+
+    // Final sync from database so UI updates without browser refresh
+    const freshCategories = await apiGet<Category>("categories");
+
+    setCategories(
+      sortBySortOrder(freshCategories.map(normalizeCategory) as Category[])
     );
-
-    try {
-      await apiDelete("categories", cleanId);
-    } catch (error) {
-      setCategories(oldCategories);
-      throw error;
-    }
-  };
+  } catch (error) {
+    setCategories(oldCategories);
+    throw error;
+  }
+};
 
   const addModifier = async (modifier: ModifierGroupPayload) => {
     const nextSortOrder = getNextModifierSortOrder(modifierGroups);
