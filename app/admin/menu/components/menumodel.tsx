@@ -46,6 +46,7 @@ export default function MenuModal({
   categories,
   modifierGroups,
   upsellRules = [],
+  selectedStoreId: selectedStoreIdFromParent = "",
   onClose,
   onSave,
 }: {
@@ -56,9 +57,10 @@ export default function MenuModal({
   categories: Category[];
   modifierGroups: ModifierGroup[];
   upsellRules?: UpsellRule[];
+  selectedStoreId?: string;
   onClose: () => void;
   onSave: (value: SaveValue) => void;
-}) {
+})  {
   const productRef = useRef<ProductFormRef>(null);
   const categoryRef = useRef<CategoryFormRef>(null);
   const modifierRef = useRef<ModifierGroupFormRef>(null);
@@ -70,9 +72,13 @@ export default function MenuModal({
   const isProduct = type === "products";
   const isCategory = type === "categories";
   const isModifier = type === "modifiers";
+  const isUpsell = type === "upsells";
   const isCategoryAdd = isCategory && !isEdit;
   const isCategoryEdit = isCategory && isEdit;
-  const showTopStoreBox = !isModifier && !isProduct;
+
+  // Products, modifiers, and upsells handle store logic inside their own forms.
+  // Only category add/edit needs this top store box.
+  const showTopStoreBox = isCategory;
 
   const storeOptions = useMemo(() => {
     return stores
@@ -234,7 +240,7 @@ const selectedStoreProducts = useMemo(() => {
       return;
     }
 
-    if (type === "products") {
+    if (type === "products" || isUpsell) {
       onSave(value);
       return;
     }
@@ -281,12 +287,15 @@ const selectedStoreProducts = useMemo(() => {
       return;
     }
 
+    if (isUpsell) {
+      upsellRef.current?.submit();
+      return;
+    }
+
     if (!selectedStoreId) {
       alert("Please select a store first.");
       return;
     }
-
-    if (type === "upsells") upsellRef.current?.submit();
   };
 
   return (
@@ -438,15 +447,15 @@ const selectedStoreProducts = useMemo(() => {
       )}
 
       {type === "upsells" && (
-   <UpsellForm
-  key={`upsell-form-${selectedStoreId}-${getSafeId(item) || "new"}`}
-  ref={upsellRef}
-  item={item as UpsellRule | null}
-  categories={selectedStoreCategories}
-  products={selectedStoreProducts}
-  selectedStoreId={selectedStoreId}
-  onSave={handleFormSave}
-/>
+        <UpsellForm
+          ref={upsellRef}
+          item={item as UpsellRule | null}
+          categories={categories}
+          products={products}
+          stores={stores}
+          selectedStoreId={selectedStoreIdFromParent || selectedStoreId || firstStoreId}
+          onSave={handleFormSave}
+        />
       )}
     </BaseMenuModal>
   );
@@ -568,6 +577,11 @@ function isItemInSelectedStore(
       store?: unknown;
       status?: "Active" | "Inactive";
     }>;
+    storeConfigs?: Array<{
+      storeId?: unknown;
+      available?: boolean;
+      status?: "Active" | "Paused" | "Inactive";
+    }>;
   };
 
   /*
@@ -585,6 +599,22 @@ function isItemInSelectedStore(
       return areStoreValuesSame(
         storeOptions,
         assignmentStoreId,
+        cleanSelectedStoreId
+      );
+    });
+  }
+
+  if (Array.isArray(obj.storeConfigs) && obj.storeConfigs.length > 0) {
+    return obj.storeConfigs.some((config) => {
+      if (config.available === false || config.status === "Inactive") {
+        return false;
+      }
+
+      const configStoreId = normalizeStoreValue(config.storeId);
+
+      return areStoreValuesSame(
+        storeOptions,
+        configStoreId,
         cleanSelectedStoreId
       );
     });

@@ -11,11 +11,55 @@ function slugify(value: string) {
 
 function cleanNumber(value: unknown) {
   const number = Number(value || 0);
-  return Number.isFinite(number) ? number : 0;
+  return Number.isFinite(number) ? Math.max(0, number) : 0;
+}
+
+function cleanString(value: unknown) {
+  return String(value || "").trim();
 }
 
 function normalizeStoreId(value: unknown) {
   return String(value || "").trim().toLowerCase();
+}
+
+function cleanRelatedUpsells(value: unknown) {
+  const rawItems = Array.isArray(value) ? value : [];
+  const unique = new Map<string, { upsellId: string; name: string; price: number }>();
+
+  rawItems.forEach((item: any, index) => {
+    if (typeof item === "string" || typeof item === "number") {
+      const upsellId = cleanString(item);
+      if (!upsellId) return;
+
+      unique.set(upsellId, {
+        upsellId,
+        name: upsellId,
+        price: 0,
+      });
+      return;
+    }
+
+    if (!item || typeof item !== "object") return;
+
+    const name = cleanString(
+      item.name || item.offer || item.title || item.label || item.upsellName
+    );
+    const upsellId = cleanString(
+      item.upsellId || item._id || item.id || item.slug || slugify(name)
+    );
+
+    if (!upsellId && !name) return;
+
+    const key = upsellId || slugify(name) || `upsell-${index + 1}`;
+
+    unique.set(key, {
+      upsellId: key,
+      name: name || key,
+      price: cleanNumber(item.price),
+    });
+  });
+
+  return Array.from(unique.values());
 }
 
 const ProductSizeSchema = new Schema(
@@ -61,6 +105,15 @@ const ProductModifierGroupSchema = new Schema(
       default: "Active",
     },
     options: { type: [ProductModifierOptionSchema], default: [] },
+  },
+  { _id: false }
+);
+
+const ProductRelatedUpsellSchema = new Schema(
+  {
+    upsellId: { type: String, required: true, trim: true, index: true },
+    name: { type: String, required: true, trim: true },
+    price: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
 );
@@ -115,8 +168,10 @@ const ProductStoreConfigSchema = new Schema(
       type: [String],
       default: [],
     },
+
+    // Store-wise upsells with editable admin price.
     relatedUpsells: {
-      type: [String],
+      type: [ProductRelatedUpsellSchema],
       default: [],
     },
     upsell: {
@@ -149,6 +204,7 @@ ProductStoreConfigSchema.pre("validate", function () {
   doc.productId = String(doc.productId || "").trim();
   doc.storeId = normalizeStoreId(doc.storeId);
   doc.categoryId = String(doc.categoryId || "").trim();
+  doc.relatedUpsells = cleanRelatedUpsells(doc.relatedUpsells);
 
   if (!Array.isArray(doc.sizes) || doc.sizes.length === 0) {
     doc.sizes = [
@@ -196,6 +252,7 @@ ProductStoreConfigSchema.index(
 );
 ProductStoreConfigSchema.index({ storeId: 1, categoryId: 1, status: 1 });
 ProductStoreConfigSchema.index({ storeId: 1, sortOrder: 1 });
+ProductStoreConfigSchema.index({ storeId: 1, "relatedUpsells.upsellId": 1 });
 
 if (
   process.env.NODE_ENV === "development" &&

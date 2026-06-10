@@ -1,7 +1,7 @@
 export type TabType = "products" | "categories" | "modifiers" | "upsells";
 
-export type ProductStatus = "Active" | "Draft" | "Hidden";
-export type CategoryStatus = "Active" | "Hidden";
+export type ProductStatus = "Active" | "Draft" | "Hidden" | "Inactive";
+export type CategoryStatus = "Active" | "Hidden" | "Inactive";
 export type UpsellStatus = "Active" | "Paused" | "Inactive";
 export type StoreStatus = "Active" | "Inactive";
 
@@ -98,6 +98,41 @@ export type ProductModifierGroup = {
   options: ProductModifierOption[];
 };
 
+export type ProductRelatedUpsell = {
+  upsellId: string;
+  name: string;
+  price: number;
+};
+
+export type ProductStoreConfig = {
+  _id?: string;
+  id?: string;
+  productId?: string;
+
+  storeId: string;
+
+  category?: string;
+  categoryId: string;
+  categoryName: string;
+  categorySlug?: string;
+
+  price: number;
+  sizes?: ProductSize[];
+
+  modifierGroups: ProductModifierGroup[];
+  modifierGroupIds?: string[];
+
+  relatedUpsells?: ProductRelatedUpsell[];
+  upsell?: string;
+
+  status: ProductStatus;
+  sortOrder?: number;
+
+  isAvailable?: boolean;
+  storeName?: string;
+  updatedAt?: string;
+};
+
 export type Product = {
   _id?: string;
   id: string;
@@ -122,7 +157,9 @@ export type Product = {
   modifierGroupIds?: string[];
 
   upsell: string;
-  relatedUpsells?: string[];
+  relatedUpsells?: ProductRelatedUpsell[];
+
+  storeConfigs?: ProductStoreConfig[];
 
   description?: string;
   sortOrder?: number;
@@ -179,29 +216,57 @@ export type ModifierGroup = {
   updatedAt?: string;
 };
 
+export type UpsellStoreConfig = {
+  _id?: string;
+  id?: string;
+
+  upsellId?: string;
+
+  storeId: string;
+
+  categoryId: string;
+  categoryName: string;
+
+  available: boolean;
+  status?: UpsellStatus;
+  sortOrder?: number;
+
+  updatedAt?: string;
+};
+
 export type UpsellRule = {
   _id?: string;
   id?: string;
 
+  // Primary/fallback store for old table/filter compatibility.
+  // Actual multi-store visibility and category selection is controlled by storeConfigs.
   storeId: string;
+  storeIds?: string[];
+  storeConfigs?: UpsellStoreConfig[];
 
-  name?: string;
+  name: string;
   slug?: string;
 
-  triggerCategoryId: string;
-  triggerCategoryName: string;
-
-  offerProductIds: string[];
-
-  trigger?: string;
-  offer?: string;
   image?: string;
+  description?: string;
 
-  appliesToCategories?: string[];
-  appliesToProducts?: string[];
+  // Fallback category fields come from the first available store config.
+  categoryId?: string;
+  categoryName?: string;
+  categoryType?: string;
 
   sortOrder?: number;
   status: UpsellStatus;
+
+  // Legacy fields kept optional so old product-based upsell records do not break TypeScript.
+  // New upsell form/API does not use these fields.
+  triggerCategoryId?: string;
+  triggerCategoryName?: string;
+  offerProductIds?: string[];
+  trigger?: string;
+  offer?: string;
+  appliesToCategories?: string[];
+  appliesToProducts?: string[];
 
   updatedAt?: string;
 };

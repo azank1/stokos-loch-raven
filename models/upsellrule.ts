@@ -9,8 +9,36 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
+
+function cleanStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => cleanString(item))
+        .filter(Boolean)
+    )
+  );
+}
+
+function cleanStatus(value: unknown) {
+  const status = cleanString(value);
+
+  if (["Active", "Paused", "Inactive"].includes(status)) {
+    return status;
+  }
+
+  return "Active";
+}
+
 const UpsellRuleSchema = new Schema(
   {
+    // Master upsell item. Store/category availability is stored in UpsellStoreConfig.
+    // These store fields are denormalized only for old UI/filter compatibility.
     storeId: {
       type: String,
       required: true,
@@ -19,61 +47,35 @@ const UpsellRuleSchema = new Schema(
       trim: true,
     },
 
+    storeIds: {
+      type: [String],
+      default: [],
+      index: true,
+    },
+
     name: {
       type: String,
+      required: true,
       trim: true,
-      default: "",
     },
 
     slug: {
       type: String,
       trim: true,
       lowercase: true,
-    },
-
-    // Category that triggers this upsell rule.
-    triggerCategoryId: {
-      type: String,
-      required: true,
-      trim: true,
       index: true,
     },
 
-    triggerCategoryName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    // Multiple offered products.
-    // Pricing/image/name will come from Product model.
-    offerProductIds: {
-      type: [String],
-      required: true,
-      validate: {
-        validator(value: string[]) {
-          return Array.isArray(value) && value.length > 0;
-        },
-        message: "At least one offer product is required.",
-      },
-      default: [],
-    },
-
-    // Legacy/readable support.
-    trigger: {
-      type: String,
-      default: "",
-    },
-
-    offer: {
+    image: {
       type: String,
       default: "",
       trim: true,
     },
 
-    appliesToCategories: {
-      type: [String],
-      default: [],
+    description: {
+      type: String,
+      default: "",
+      trim: true,
     },
 
     sortOrder: {
@@ -86,6 +88,19 @@ const UpsellRuleSchema = new Schema(
       enum: ["Active", "Paused", "Inactive"],
       default: "Active",
     },
+
+    // Legacy fields kept optional so old product-based upsell records do not break.
+    // New flow does not use product selection or one global trigger category.
+    categoryType: { type: String, default: "", trim: true },
+    categoryId: { type: String, default: "", trim: true },
+    categoryName: { type: String, default: "", trim: true },
+    triggerCategoryId: { type: String, default: "", trim: true },
+    triggerCategoryName: { type: String, default: "", trim: true },
+    offerProductIds: { type: [String], default: [] },
+    trigger: { type: String, default: "", trim: true },
+    offer: { type: String, default: "", trim: true },
+    appliesToCategories: { type: [String], default: [] },
+    appliesToProducts: { type: [String], default: [] },
   },
   {
     timestamps: true,
@@ -96,39 +111,33 @@ const UpsellRuleSchema = new Schema(
 UpsellRuleSchema.pre("validate", function () {
   const doc = this as any;
 
-  const categoryName = String(doc.triggerCategoryName || "").trim();
-  const categoryId = String(doc.triggerCategoryId || "").trim();
+  doc.name = cleanString(doc.name);
+  doc.image = cleanString(doc.image);
+  doc.description = cleanString(doc.description);
+  doc.status = cleanStatus(doc.status);
+  doc.sortOrder = Number(doc.sortOrder || 0);
+  doc.storeIds = cleanStringArray(doc.storeIds);
+  doc.storeId = cleanString(doc.storeId || doc.storeIds[0] || "towson");
 
-  if (!doc.name) {
-    doc.name = categoryName ? `${categoryName} Upsells` : "Category Upsells";
-  }
+  doc.categoryId = cleanString(doc.categoryId);
+  doc.categoryName = cleanString(doc.categoryName || doc.categoryType);
+  doc.categoryType = cleanString(doc.categoryType || doc.categoryName);
 
-  if (!doc.slug) {
-    doc.slug = slugify(`${categoryName || categoryId}-upsells`);
-  }
+  doc.slug = slugify(doc.slug || doc.name);
 
-  if (!doc.trigger) {
-    doc.trigger = categoryName ? `Any ${categoryName}` : "Any Category Product";
-  }
-
-  if (!doc.offer) {
-    const count = Array.isArray(doc.offerProductIds)
-      ? doc.offerProductIds.length
-      : 0;
-
-    doc.offer = `${count} offer product${count === 1 ? "" : "s"}`;
-  }
-
-  if (!Array.isArray(doc.appliesToCategories) || doc.appliesToCategories.length === 0) {
-    doc.appliesToCategories = categoryName ? [categoryName] : [];
-  }
+  // Keep legacy fields populated with harmless values for old code/old indexes.
+  doc.triggerCategoryId = cleanString(doc.triggerCategoryId || doc.categoryId || doc.slug);
+  doc.triggerCategoryName = cleanString(doc.triggerCategoryName || doc.categoryName || doc.categoryType);
+  doc.offerProductIds = [];
+  doc.trigger = doc.triggerCategoryName || doc.categoryType;
+  doc.offer = doc.name;
+  doc.appliesToCategories = doc.triggerCategoryName ? [doc.triggerCategoryName] : [];
+  doc.appliesToProducts = [];
 });
 
-// One category rule per store.
-UpsellRuleSchema.index(
-  { storeId: 1, triggerCategoryId: 1 },
-  { unique: true }
-);
+UpsellRuleSchema.index({ slug: 1 }, { unique: true });
+UpsellRuleSchema.index({ storeIds: 1, status: 1, sortOrder: 1 });
+UpsellRuleSchema.index({ status: 1, sortOrder: 1 });
 
 const UpsellRule =
   mongoose.models.UpsellRule ||

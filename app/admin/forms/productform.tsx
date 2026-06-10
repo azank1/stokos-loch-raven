@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
   type ChangeEvent,
+  type KeyboardEvent,
 } from "react";
 
 import type {
@@ -15,6 +16,7 @@ import type {
   Product,
   ProductModifierGroup,
   ProductModifierOption,
+  ProductRelatedUpsell,
   ProductSize,
   ProductStatus,
   UpsellRule,
@@ -22,11 +24,7 @@ import type {
 
 import { FormInput, FormSelect } from "../menu/components/ui";
 import ImageUploadBox from "../adminmenumodel/imageuploadbox";
-import {
-  getSafeId,
-  getTextValue,
-  normalizeStringArray,
-} from "../utils/menuhelpers";
+import { getSafeId, normalizeStringArray } from "../utils/menuhelpers";
 
 export type ProductFormRef = {
   submit: () => void;
@@ -40,13 +38,16 @@ type StoreItem = {
   status?: string;
 };
 
-type ProductWithStoreConfigs = Product & {
+type ProductWithStoreConfigs = Omit<
+  Product,
+  "relatedUpsells" | "storeConfigs"
+> & {
   _id?: string;
   description?: string;
   tags?: string[];
   badge?: string;
   storeConfigs?: ProductStoreConfigState[];
-  relatedUpsells?: string[];
+  relatedUpsells?: ProductRelatedUpsell[];
 };
 
 type CategoryWithMongo = Category & {
@@ -87,9 +88,9 @@ type ProductStoreConfigState = {
   sizes: ProductSize[];
   modifierGroups: ProductModifierGroup[];
   modifierGroupIds?: string[];
-  relatedUpsells?: string[];
+  relatedUpsells?: ProductRelatedUpsell[];
   upsell?: string;
-  status: ProductStatus | "Inactive";
+  status: ProductStatus;
   sortOrder: number;
 };
 
@@ -109,9 +110,28 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function sanitizePositiveDecimalInput(value: unknown) {
+  const raw = String(value ?? "");
+  const digitsAndDots = raw.replace(/[^\d.]/g, "");
+  const [whole = "", ...decimalParts] = digitsAndDots.split(".");
+  const decimal = decimalParts.join("");
+
+  return decimalParts.length > 0 ? `${whole}.${decimal}` : whole;
+}
+
 function cleanNumber(value: unknown) {
-  const number = Number(value || 0);
-  return Number.isFinite(number) ? number : 0;
+  const cleaned = sanitizePositiveDecimalInput(value);
+  const number = Number(cleaned || 0);
+
+  if (!Number.isFinite(number)) return 0;
+
+  return Math.max(0, number);
+}
+
+function blockBadNumberKeys(event: KeyboardEvent<HTMLInputElement>) {
+  if (["-", "+", "e", "E"].includes(event.key)) {
+    event.preventDefault();
+  }
 }
 
 const SIZE_BASED_CATEGORY_KEYWORDS = [
@@ -314,8 +334,6 @@ function getCategoriesForStore(
 
     const key = cleanName.toLowerCase();
 
-    // Old DB may still have Towson/York/Liberty duplicate categories with same name.
-    // Keep only one option per category name so React option keys do not duplicate.
     if (!uniqueByName.has(key)) {
       uniqueByName.set(key, category);
     }
@@ -589,11 +607,19 @@ function normalizeProductModifierGroups(
   return normalizedRawGroups.map((existingGroup, index) => {
     const matchedAssignedGroup = assignedGroups.find((assignedGroup) => {
       const fallback = `modifier-${index}`;
-      const assignedId = getGlobalModifierGroupId(assignedGroup, fallback).toLowerCase();
-      const assignedName = String(assignedGroup.name || "").trim().toLowerCase();
+      const assignedId = getGlobalModifierGroupId(
+        assignedGroup,
+        fallback
+      ).toLowerCase();
+      const assignedName = String(assignedGroup.name || "")
+        .trim()
+        .toLowerCase();
       const existingKeys = getModifierGroupKeys(existingGroup);
 
-      return existingKeys.includes(assignedId) || existingKeys.includes(assignedName);
+      return (
+        existingKeys.includes(assignedId) ||
+        existingKeys.includes(assignedName)
+      );
     });
 
     if (!matchedAssignedGroup) {
@@ -751,7 +777,10 @@ function getGroupSelected(
   assignedGroup: ModifierGroupWithMongo,
   fallback: string
 ) {
-  const groupId = getGlobalModifierGroupId(assignedGroup, fallback).toLowerCase();
+  const groupId = getGlobalModifierGroupId(
+    assignedGroup,
+    fallback
+  ).toLowerCase();
   const groupName = String(assignedGroup.name || "").trim().toLowerCase();
 
   return selectedGroups.some((group) => {
@@ -765,7 +794,10 @@ function getSelectedProductGroup(
   assignedGroup: ModifierGroupWithMongo,
   fallback: string
 ) {
-  const groupId = getGlobalModifierGroupId(assignedGroup, fallback).toLowerCase();
+  const groupId = getGlobalModifierGroupId(
+    assignedGroup,
+    fallback
+  ).toLowerCase();
   const groupName = String(assignedGroup.name || "").trim().toLowerCase();
 
   return selectedGroups.find((group) => {
@@ -833,18 +865,12 @@ function cleanProductModifierGroupsForSubmit(
     .filter(Boolean);
 }
 
-function getConfigId(config: unknown) {
-  if (!config || typeof config !== "object") return "";
-  const obj = config as { _id?: unknown; id?: unknown };
-  return String(obj._id || obj.id || "").trim();
-}
-
 function findConfigForStore(configs: ProductStoreConfigState[], storeId: string) {
   return configs.find(
-    (config) => String(config.storeId || "").trim() === String(storeId || "").trim()
+    (config) =>
+      String(config.storeId || "").trim() === String(storeId || "").trim()
   );
 }
-
 
 function getProductRecordId(product: unknown) {
   if (!product || typeof product !== "object") return "";
@@ -883,9 +909,167 @@ async function productNameAlreadyExists(name: string, currentProductId?: string)
       return productKey === targetNameKey;
     });
   } catch (error) {
-    // Backend duplicate protection will still catch this.
     return false;
   }
+}
+
+function getUpsellId(rule: UpsellRuleWithCategories, fallback: string) {
+  return String(rule._id || rule.id || rule.slug || fallback).trim();
+}
+
+function getUpsellName(rule: UpsellRuleWithCategories) {
+  return String(rule.name || rule.offer || rule.slug || "Upsell Offer").trim();
+}
+
+function findUpsellRuleById(
+  upsellRules: UpsellRuleWithCategories[],
+  upsellId: string
+) {
+  const cleanId = String(upsellId || "").trim().toLowerCase();
+
+  return upsellRules.find((rule, index) => {
+    const ruleId = getUpsellId(rule, `upsell-${index}`).toLowerCase();
+    return ruleId === cleanId;
+  });
+}
+
+function normalizeProductRelatedUpsells(
+  value: unknown,
+  upsellRules: UpsellRuleWithCategories[] = []
+): ProductRelatedUpsell[] {
+  const rawUpsells = Array.isArray(value) ? value : [];
+
+  const normalized = rawUpsells
+    .map((item, index) => {
+      if (typeof item === "string") {
+        const upsellId = item.trim();
+        if (!upsellId) return null;
+
+        const matchedRule = findUpsellRuleById(upsellRules, upsellId);
+
+        return {
+          upsellId,
+          name: matchedRule ? getUpsellName(matchedRule) : upsellId,
+          price: 0,
+        };
+      }
+
+      if (!item || typeof item !== "object") return null;
+
+      const obj = item as {
+        upsellId?: unknown;
+        id?: unknown;
+        _id?: unknown;
+        name?: unknown;
+        offer?: unknown;
+        price?: unknown;
+      };
+
+      const upsellId = String(
+        obj.upsellId || obj.id || obj._id || `upsell-${index}`
+      ).trim();
+
+      if (!upsellId) return null;
+
+      const matchedRule = findUpsellRuleById(upsellRules, upsellId);
+
+      const name =
+        String(obj.name || obj.offer || "").trim() ||
+        (matchedRule ? getUpsellName(matchedRule) : upsellId);
+
+      return {
+        upsellId,
+        name,
+        price: cleanNumber(obj.price),
+      };
+    })
+    .filter(Boolean) as ProductRelatedUpsell[];
+
+  const unique = new Map<string, ProductRelatedUpsell>();
+
+  normalized.forEach((upsell) => {
+    if (!upsell.upsellId) return;
+    unique.set(upsell.upsellId, upsell);
+  });
+
+  return Array.from(unique.values());
+}
+
+function getSelectedRelatedUpsell(
+  relatedUpsells: ProductRelatedUpsell[] | undefined,
+  upsellId: string
+) {
+  return (relatedUpsells || []).find(
+    (item) =>
+      String(item.upsellId || "").trim() === String(upsellId || "").trim()
+  );
+}
+
+function upsellMatchesStoreAndCategory(params: {
+  rule: UpsellRuleWithCategories;
+  storeId: string;
+  categoryId: string;
+  categoryName: string;
+  category: string;
+}) {
+  const { rule, storeId, categoryId, categoryName, category } = params;
+
+  if (rule.status === "Paused" || rule.status === "Inactive") return false;
+
+  const cleanStoreId = String(storeId || "").trim();
+  const categoryValues = [categoryId, categoryName, category]
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  const storeConfigs = Array.isArray(rule.storeConfigs)
+    ? rule.storeConfigs
+    : [];
+
+  if (storeConfigs.length > 0) {
+    return storeConfigs.some((config) => {
+      const configStoreId = String(config.storeId || "").trim();
+      const storeMatch =
+        configStoreId === cleanStoreId ||
+        configStoreId.toLowerCase() === cleanStoreId.toLowerCase();
+
+      const active =
+        config.available !== false &&
+        config.status !== "Inactive" &&
+        config.status !== "Paused";
+
+      const configCategoryValues = [config.categoryId, config.categoryName]
+        .map((item) => String(item || "").trim().toLowerCase())
+        .filter(Boolean);
+
+      const categoryMatch =
+        configCategoryValues.length === 0 ||
+        categoryValues.some((value) => configCategoryValues.includes(value));
+
+      return storeMatch && active && categoryMatch;
+    });
+  }
+
+  const selectedCategories = Array.isArray(rule.appliesToCategories)
+    ? rule.appliesToCategories
+    : [];
+
+  if (selectedCategories.length > 0) {
+    const cleanSelectedCategories = selectedCategories.map((item) =>
+      String(item || "").trim().toLowerCase()
+    );
+
+    return categoryValues.some((value) => cleanSelectedCategories.includes(value));
+  }
+
+  const trigger = String(rule.trigger || "").toLowerCase();
+  const currentCategory = String(categoryName || category || "").toLowerCase();
+
+  return (
+    trigger.includes("all") ||
+    trigger.includes("any") ||
+    trigger.includes(currentCategory) ||
+    trigger.includes(currentCategory.replace(/s$/, ""))
+  );
 }
 
 function normalizeStoreConfig(params: {
@@ -894,6 +1078,7 @@ function normalizeStoreConfig(params: {
   storeName?: string;
   categories: CategoryWithMongo[];
   modifierGroups: ModifierGroupWithMongo[];
+  upsellRules: UpsellRuleWithCategories[];
   selectedStoreId: string;
   legacyProduct?: any;
   isNewProduct: boolean;
@@ -911,8 +1096,13 @@ function normalizeStoreConfig(params: {
     categorySource.categoryName
   );
 
-  const categoryId = getCategoryId(matchedCategory) || String(categorySource.categoryId || "").trim();
-  const categoryName = matchedCategory?.name || String(categorySource.categoryName || categorySource.category || "").trim();
+  const categoryId =
+    getCategoryId(matchedCategory) ||
+    String(categorySource.categoryId || "").trim();
+
+  const categoryName =
+    matchedCategory?.name ||
+    String(categorySource.categoryName || categorySource.category || "").trim();
 
   const price = cleanNumber(useLegacy ? legacy.price : raw.price);
   const sizes = normalizeProductSizes(useLegacy ? legacy.sizes : raw.sizes, price);
@@ -948,8 +1138,13 @@ function normalizeStoreConfig(params: {
       assignedGroups,
       false
     ),
-    modifierGroupIds: normalizeStringArray(useLegacy ? legacy.modifierGroupIds : raw.modifierGroupIds),
-    relatedUpsells: normalizeStringArray(useLegacy ? legacy.relatedUpsells : raw.relatedUpsells),
+    modifierGroupIds: normalizeStringArray(
+      useLegacy ? legacy.modifierGroupIds : raw.modifierGroupIds
+    ),
+    relatedUpsells: normalizeProductRelatedUpsells(
+      useLegacy ? legacy.relatedUpsells : raw.relatedUpsells,
+      params.upsellRules
+    ),
     upsell: String(useLegacy ? legacy.upsell || "" : raw.upsell || ""),
     status: (raw.status || legacy.status || "Active") as ProductStatus,
     sortOrder: Number(raw.sortOrder ?? legacy.sortOrder ?? 0),
@@ -961,6 +1156,7 @@ function buildStoreConfigs(params: {
   stores: StoreItem[];
   categories: CategoryWithMongo[];
   modifierGroups: ModifierGroupWithMongo[];
+  upsellRules: UpsellRuleWithCategories[];
   selectedStoreId: string;
 }) {
   const rawConfigs = Array.isArray(params.item?.storeConfigs)
@@ -989,6 +1185,7 @@ function buildStoreConfigs(params: {
       storeName: store.name,
       categories: params.categories,
       modifierGroups: params.modifierGroups,
+      upsellRules: params.upsellRules,
       selectedStoreId: params.selectedStoreId || getStoreId(baseStores[0]),
       legacyProduct: params.item,
       isNewProduct: !params.item,
@@ -1040,10 +1237,12 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
         stores: safeStores,
         categories: safeCategories,
         modifierGroups: safeModifierGroups,
+        upsellRules: safeUpsellRules,
         selectedStoreId,
       });
 
-      const firstActiveConfig = storeConfigs.find((config) => config.isAvailable) || storeConfigs[0];
+      const firstActiveConfig =
+        storeConfigs.find((config) => config.isAvailable) || storeConfigs[0];
 
       return {
         ...(product || ({} as ProductWithStoreConfigs)),
@@ -1076,8 +1275,16 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
     );
 
     const [activeStoreId, setActiveStoreId] = useState(() => {
-      const firstAvailable = form.storeConfigs.find((config) => config.isAvailable);
-      return firstAvailable?.storeId || form.storeConfigs[0]?.storeId || selectedStoreId || "";
+      const firstAvailable = form.storeConfigs.find(
+        (config) => config.isAvailable
+      );
+
+      return (
+        firstAvailable?.storeId ||
+        form.storeConfigs[0]?.storeId ||
+        selectedStoreId ||
+        ""
+      );
     });
 
     const [expandedModifierKey, setExpandedModifierKey] = useState("");
@@ -1152,7 +1359,8 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
       const selectedCategory = findSelectedCategory(storeCategories, value);
       const selectedCategoryId = getCategoryId(selectedCategory);
       const selectedCategoryName = selectedCategory?.name || value;
-      const nextCategoryUsesSizes = isSizeBasedProductCategory(selectedCategoryName);
+      const nextCategoryUsesSizes =
+        isSizeBasedProductCategory(selectedCategoryName);
 
       updateStoreConfig(storeId, (config) => {
         const currentSizes = normalizeProductSizes(config.sizes, config.price);
@@ -1239,6 +1447,7 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
         const currentSizes = normalizeProductSizes(config.sizes, config.price);
         const nextIndex = currentSizes.length + 1;
         const newSizeName = `Size ${nextIndex}`;
+
         const nextSizes = [
           ...currentSizes,
           {
@@ -1269,7 +1478,9 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
           return config;
         }
 
-        const nextSizes = currentSizes.filter((_, sizeIndex) => sizeIndex !== index);
+        const nextSizes = currentSizes.filter(
+          (_, sizeIndex) => sizeIndex !== index
+        );
 
         return {
           ...config,
@@ -1297,7 +1508,11 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
         );
 
         if (selected) {
-          const groupId = getGlobalModifierGroupId(group, `modifier-${index}`).toLowerCase();
+          const groupId = getGlobalModifierGroupId(
+            group,
+            `modifier-${index}`
+          ).toLowerCase();
+
           const groupName = String(group.name || "").trim().toLowerCase();
 
           return {
@@ -1330,24 +1545,26 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
       value: string
     ) => {
       updateStoreConfig(storeId, (config) => {
-        const nextGroups = config.modifierGroups.map((group, currentGroupIndex) => {
-          if (currentGroupIndex !== groupIndex) return group;
+        const nextGroups = config.modifierGroups.map(
+          (group, currentGroupIndex) => {
+            if (currentGroupIndex !== groupIndex) return group;
 
-          return {
-            ...group,
-            options: group.options.map((option, currentOptionIndex) => {
-              if (currentOptionIndex !== optionIndex) return option;
+            return {
+              ...group,
+              options: group.options.map((option, currentOptionIndex) => {
+                if (currentOptionIndex !== optionIndex) return option;
 
-              return {
-                ...option,
-                pricesBySize: {
-                  ...option.pricesBySize,
-                  [sizeName.trim()]: cleanNumber(value),
-                },
-              };
-            }),
-          };
-        });
+                return {
+                  ...option,
+                  pricesBySize: {
+                    ...option.pricesBySize,
+                    [sizeName.trim()]: cleanNumber(value),
+                  },
+                };
+              }),
+            };
+          }
+        );
 
         return {
           ...config,
@@ -1356,16 +1573,59 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
       });
     };
 
-    const toggleUpsell = (storeId: string, id: string) => {
+    const toggleUpsell = (
+      storeId: string,
+      rule: UpsellRuleWithCategories,
+      fallback: string
+    ) => {
+      const upsellId = getUpsellId(rule, fallback);
+      const upsellName = getUpsellName(rule);
+
       updateStoreConfig(storeId, (config) => {
-        const current = config.relatedUpsells || [];
-        const exists = current.includes(id);
+        const current = normalizeProductRelatedUpsells(
+          config.relatedUpsells,
+          safeUpsellRules
+        );
+
+        const exists = current.some((item) => item.upsellId === upsellId);
 
         return {
           ...config,
           relatedUpsells: exists
-            ? current.filter((item) => item !== id)
-            : [...current, id],
+            ? current.filter((item) => item.upsellId !== upsellId)
+            : [
+                ...current,
+                {
+                  upsellId,
+                  name: upsellName,
+                  price: 0,
+                },
+              ],
+        };
+      });
+    };
+
+    const updateUpsellPrice = (
+      storeId: string,
+      upsellId: string,
+      value: string
+    ) => {
+      updateStoreConfig(storeId, (config) => {
+        const current = normalizeProductRelatedUpsells(
+          config.relatedUpsells,
+          safeUpsellRules
+        );
+
+        return {
+          ...config,
+          relatedUpsells: current.map((item) =>
+            item.upsellId === upsellId
+              ? {
+                  ...item,
+                  price: cleanNumber(value),
+                }
+              : item
+          ),
         };
       });
     };
@@ -1393,78 +1653,98 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
 
       try {
         const cleanStoreConfigs = form.storeConfigs.map((config) => {
-        if (!config.isAvailable) {
+          if (!config.isAvailable) {
+            return {
+              ...config,
+              isAvailable: false,
+            };
+          }
+
+          const selectedCategory = findSelectedCategory(
+            safeCategories,
+            config.category,
+            config.categoryId,
+            config.categoryName
+          );
+
+          const selectedCategoryId =
+            getCategoryId(selectedCategory) ||
+            String(config.categoryId || "").trim();
+
+          const selectedCategoryName =
+            selectedCategory?.name ||
+            String(config.categoryName || config.category || "").trim();
+
+          if (!selectedCategoryName) {
+            throw new Error(
+              `Category required for ${config.storeName || config.storeId}`
+            );
+          }
+
+          const submitCategoryUsesSizes =
+            isSizeBasedProductCategory(selectedCategoryName);
+
+          const cleanSizes = submitCategoryUsesSizes
+            ? cleanProductSizesForSubmit(config.sizes, config.price)
+            : createRegularProductSize(
+                getFirstSizePrice(config.sizes, config.price)
+              );
+
+          const sizeNames = getProductSizeNames(cleanSizes);
+          const uniqueSizeNames = new Set(
+            sizeNames.map((size) => size.toLowerCase())
+          );
+
+          if (sizeNames.length !== uniqueSizeNames.size) {
+            throw new Error(
+              `Size names must be unique for ${
+                config.storeName || config.storeId
+              }.`
+            );
+          }
+
+          const cleanRelatedUpsells = normalizeProductRelatedUpsells(
+            config.relatedUpsells,
+            safeUpsellRules
+          ).map((upsell) => ({
+            upsellId: String(upsell.upsellId || "").trim(),
+            name: String(upsell.name || "").trim(),
+            price: cleanNumber(upsell.price),
+          }));
+
+          const cleanModifierGroups = cleanProductModifierGroupsForSubmit(
+            config.modifierGroups,
+            cleanSizes
+          ) as ProductModifierGroup[];
+
+          const modifierGroupIds = cleanModifierGroups
+            .map((group) => String(group.modifierGroupId || "").trim())
+            .filter(Boolean);
+
+          const upsellSummary = cleanRelatedUpsells
+            .map((upsell) => `${upsell.name} ($${upsell.price.toFixed(2)})`)
+            .join(", ");
+
           return {
             ...config,
-            isAvailable: false,
+            isAvailable: true,
+            category: selectedCategoryId || selectedCategoryName,
+            categoryId: selectedCategoryId,
+            categoryName: selectedCategoryName,
+            price: Number(cleanSizes[0]?.price || config.price || 0),
+            sizes: cleanSizes,
+            modifierGroups: cleanModifierGroups,
+            modifierGroupIds,
+            upsell: upsellSummary,
+            relatedUpsells: cleanRelatedUpsells,
+            status: config.status || "Active",
+            sortOrder: Number(config.sortOrder || 0),
           };
-        }
+        });
 
-        const selectedCategory = findSelectedCategory(
-          safeCategories,
-          config.category,
-          config.categoryId,
-          config.categoryName
+        const firstActiveConfig = cleanStoreConfigs.find(
+          (config) => config.isAvailable
         );
-
-        const selectedCategoryId =
-          getCategoryId(selectedCategory) || String(config.categoryId || "").trim();
-
-        const selectedCategoryName =
-          selectedCategory?.name || String(config.categoryName || config.category || "").trim();
-
-        if (!selectedCategoryName) {
-          throw new Error(`Category required for ${config.storeName || config.storeId}`);
-        }
-
-        const submitCategoryUsesSizes = isSizeBasedProductCategory(selectedCategoryName);
-
-        const cleanSizes = submitCategoryUsesSizes
-          ? cleanProductSizesForSubmit(config.sizes, config.price)
-          : createRegularProductSize(getFirstSizePrice(config.sizes, config.price));
-
-        const sizeNames = getProductSizeNames(cleanSizes);
-        const uniqueSizeNames = new Set(sizeNames.map((size) => size.toLowerCase()));
-
-        if (sizeNames.length !== uniqueSizeNames.size) {
-          throw new Error(`Size names must be unique for ${config.storeName || config.storeId}.`);
-        }
-
-        const selectedUpsellNames = safeUpsellRules
-          .filter((rule, index) => {
-            const ruleId = getSafeId(rule, `upsell-${index}`);
-            return config.relatedUpsells?.includes(ruleId);
-          })
-          .map((rule) => rule.offer)
-          .filter(Boolean);
-
-        const cleanModifierGroups = cleanProductModifierGroupsForSubmit(
-          config.modifierGroups,
-          cleanSizes
-        ) as ProductModifierGroup[];
-
-        const modifierGroupIds = cleanModifierGroups
-          .map((group) => String(group.modifierGroupId || "").trim())
-          .filter(Boolean);
-
-        return {
-          ...config,
-          isAvailable: true,
-          category: selectedCategoryId || selectedCategoryName,
-          categoryId: selectedCategoryId,
-          categoryName: selectedCategoryName,
-          price: Number(cleanSizes[0]?.price || config.price || 0),
-          sizes: cleanSizes,
-          modifierGroups: cleanModifierGroups,
-          modifierGroupIds,
-          upsell: selectedUpsellNames.join(", "),
-          relatedUpsells: config.relatedUpsells || [],
-          status: config.status || "Active",
-          sortOrder: Number(config.sortOrder || 0),
-        };
-      });
-
-      const firstActiveConfig = cleanStoreConfigs.find((config) => config.isAvailable);
 
         onSave({
           ...form,
@@ -1487,7 +1767,11 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
           replaceStoreConfigs: true,
         });
       } catch (error) {
-        alert(error instanceof Error ? error.message : "Product form has invalid data.");
+        alert(
+          error instanceof Error
+            ? error.message
+            : "Product form has invalid data."
+        );
       }
     };
 
@@ -1525,7 +1809,9 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
               Store Availability & Pricing
             </h3>
             <p className="mt-1 text-xs font-bold text-zinc-500">
-              Product is added once. Pick a store tab below, then manage only that store's category, prices, sizes, modifiers, status, and order.
+              Product is added once. Pick a store tab below, then manage only
+              that store's category, prices, sizes, modifiers, upsells, status,
+              and order.
             </p>
           </div>
 
@@ -1538,7 +1824,10 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
               <div className="grid gap-2 md:grid-cols-3">
                 {form.storeConfigs.map((config) => {
                   const active = activeStoreConfig?.storeId === config.storeId;
-                  const previewPrice = getFirstSizePrice(config.sizes, config.price);
+                  const previewPrice = getFirstSizePrice(
+                    config.sizes,
+                    config.price
+                  );
 
                   return (
                     <button
@@ -1553,8 +1842,10 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-black text-zinc-950">
-                          {config.storeName || getStoreName(safeStores, config.storeId)}
+                          {config.storeName ||
+                            getStoreName(safeStores, config.storeId)}
                         </span>
+
                         <span
                           className={`rounded-full px-2 py-1 text-[10px] font-black ${
                             config.isAvailable
@@ -1569,6 +1860,7 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
                       <p className="mt-1 truncate text-xs font-bold text-zinc-400">
                         {config.categoryName || "No category selected"}
                       </p>
+
                       <p className="mt-2 text-xs font-black text-zinc-700">
                         Base: ${previewPrice || 0}
                       </p>
@@ -1577,406 +1869,577 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
                 })}
               </div>
 
-              {activeStoreConfig ? (
-                (() => {
-                  const config = activeStoreConfig;
+              {activeStoreConfig
+                ? (() => {
+                    const config = activeStoreConfig;
 
-                  const categoriesForStore = getCategoriesForStore(
-                    safeCategories,
-                    config.storeId
-                  );
+                    const categoriesForStore = getCategoriesForStore(
+                      safeCategories,
+                      config.storeId
+                    );
 
-                  const categoryUsesSizes = isSizeBasedProductCategory(
-                    config.categoryName || config.category
-                  );
+                    const categoryUsesSizes = isSizeBasedProductCategory(
+                      config.categoryName || config.category
+                    );
 
-                  const productSizes = categoryUsesSizes
-                    ? normalizeProductSizes(config.sizes, config.price)
-                    : createRegularProductSize(getFirstSizePrice(config.sizes, config.price));
+                    const productSizes = categoryUsesSizes
+                      ? normalizeProductSizes(config.sizes, config.price)
+                      : createRegularProductSize(
+                          getFirstSizePrice(config.sizes, config.price)
+                        );
 
-                  const assignedModifierGroups = getAssignedModifierGroups(
-                    safeModifierGroups,
-                    config.storeId,
-                    config.categoryId,
-                    config.categoryName || config.category
-                  );
+                    const assignedModifierGroups = getAssignedModifierGroups(
+                      safeModifierGroups,
+                      config.storeId,
+                      config.categoryId,
+                      config.categoryName || config.category
+                    );
 
-                  const categoryBasedUpsells = safeUpsellRules.filter((rule) => {
-                    const selectedCategories = Array.isArray(rule.appliesToCategories)
-                      ? rule.appliesToCategories
-                      : [];
-
-                    if (rule.status === "Paused" || rule.status === "Inactive") {
-                      return false;
-                    }
-
-                    if (selectedCategories.length > 0) {
-                      return (
-                        selectedCategories.includes(String(config.category || "")) ||
-                        selectedCategories.includes(String(config.categoryId || "")) ||
-                        selectedCategories.includes(String(config.categoryName || ""))
-                      );
-                    }
-
-                    const trigger = String(rule.trigger || "").toLowerCase();
-                    const currentCategory = String(config.categoryName || config.category || "").toLowerCase();
+                    const categoryBasedUpsells = safeUpsellRules.filter(
+                      (rule) =>
+                        upsellMatchesStoreAndCategory({
+                          rule,
+                          storeId: config.storeId,
+                          categoryId: config.categoryId,
+                          categoryName: config.categoryName,
+                          category: config.category,
+                        })
+                    );
 
                     return (
-                      trigger.includes("all") ||
-                      trigger.includes("any") ||
-                      trigger.includes(currentCategory) ||
-                      trigger.includes(currentCategory.replace(/s$/, ""))
-                    );
-                  });
-
-                  return (
-                    <div
-                      key={config.storeId}
-                      className="rounded-[22px] border border-zinc-200 bg-white p-4"
-                    >
-                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-black text-zinc-950">
-                            {config.storeName || getStoreName(safeStores, config.storeId)} Store Config
-                          </p>
-                          <p className="text-xs font-bold text-zinc-400">
-                            {config.storeId}
-                          </p>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => toggleStoreAvailability(config.storeId)}
-                          className={`rounded-full px-4 py-2 text-xs font-black transition ${
-                            config.isAvailable
-                              ? "bg-green-700 text-white"
-                              : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-                          }`}
-                        >
-                          {config.isAvailable ? "Available" : "Not Available"}
-                        </button>
-                      </div>
-
-                      {config.isAvailable ? (
-                        <div className="space-y-4">
-                          <div className="grid gap-4 md:grid-cols-3">
-                            <FormSelect
-                              label="Category"
-                              value={String(config.categoryName || "")}
-                              onChange={(value) =>
-                                handleCategoryChange(config.storeId, value)
-                              }
-                              options={Array.from(
-                                new Set(
-                                  categoriesForStore
-                                    .map((item) => String(item.name || "").trim())
-                                    .filter(Boolean)
-                                )
-                              )}
-                            />
-
-                            <FormSelect
-                              label="Status"
-                              value={config.status}
-                              onChange={(value) =>
-                                updateStoreConfig(config.storeId, (prevConfig) => ({
-                                  ...prevConfig,
-                                  status: value as ProductStatus,
-                                }))
-                              }
-                              options={["Active", "Draft", "Hidden", "Inactive"]}
-                            />
-
-                            <FormInput
-                              label="Sort Order"
-                              value={String(config.sortOrder || 0)}
-                              onChange={(value) =>
-                                updateStoreConfig(config.storeId, (prevConfig) => ({
-                                  ...prevConfig,
-                                  sortOrder: cleanNumber(value),
-                                }))
-                              }
-                              type="number"
-                              placeholder="0"
-                            />
+                      <div
+                        key={config.storeId}
+                        className="rounded-[22px] border border-zinc-200 bg-white p-4"
+                      >
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-black text-zinc-950">
+                              {config.storeName ||
+                                getStoreName(safeStores, config.storeId)}{" "}
+                              Store 
+                            </p>
+                            <p className="text-xs font-bold text-zinc-400">
+                              {config.storeId}
+                            </p>
                           </div>
 
-                          {categoryUsesSizes ? (
-                            <details className="rounded-[22px] border border-zinc-200 bg-zinc-50 p-4" open>
-                              <summary className="cursor-pointer list-none">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
-                                    <label className="block text-sm font-black text-zinc-700">
-                                      Product Sizes & Base Prices
-                                    </label>
-                                    <p className="mt-1 text-xs font-semibold text-zinc-500">
-                                      Click this section to collapse/expand sizes.
-                                    </p>
-                                  </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleStoreAvailability(config.storeId)
+                            }
+                            className={`rounded-full px-4 py-2 text-xs font-black transition ${
+                              config.isAvailable
+                                ? "bg-green-700 text-white"
+                                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                            }`}
+                          >
+                            {config.isAvailable
+                              ? "Available"
+                              : "Not Available"}
+                          </button>
+                        </div>
 
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      addSize(config.storeId);
-                                    }}
-                                    className="rounded-full bg-green-700 px-4 py-2 text-xs font-black text-white transition hover:bg-green-800"
-                                  >
-                                    Add Size
-                                  </button>
-                                </div>
-                              </summary>
+                        {config.isAvailable ? (
+                          <div className="space-y-4">
+                            <div className="grid gap-4 md:grid-cols-3">
+                              <FormSelect
+                                label="Category"
+                                value={String(config.categoryName || "")}
+                                onChange={(value) =>
+                                  handleCategoryChange(config.storeId, value)
+                                }
+                                options={Array.from(
+                                  new Set(
+                                    categoriesForStore
+                                      .map((item) =>
+                                        String(item.name || "").trim()
+                                      )
+                                      .filter(Boolean)
+                                  )
+                                )}
+                              />
 
-                              <div className="mt-4 space-y-3">
-                                {productSizes.map((size, index) => (
-                                  <div
-                                    key={size.id || `size-${index}`}
-                                    className="grid gap-3 rounded-2xl border border-zinc-200 bg-white p-3 md:grid-cols-[1fr_160px_auto]"
-                                  >
-                                    <input
-                                      value={size.name}
-                                      onChange={(event) =>
-                                        updateSize(
-                                          config.storeId,
-                                          index,
-                                          "name",
-                                          event.target.value
-                                        )
-                                      }
-                                      placeholder="Small"
-                                      className="h-11 rounded-xl border border-zinc-200 px-3 text-sm font-bold outline-none transition focus:border-green-700"
-                                    />
+                              <FormSelect
+                                label="Status"
+                                value={config.status}
+                                onChange={(value) =>
+                                  updateStoreConfig(
+                                    config.storeId,
+                                    (prevConfig) => ({
+                                      ...prevConfig,
+                                      status: value as ProductStatus,
+                                    })
+                                  )
+                                }
+                                options={[
+                                  "Active",
+                                  "Draft",
+                                  "Hidden",
+                                  "Inactive",
+                                ]}
+                              />
 
-                                    <input
-                                      value={String(size.price)}
-                                      onChange={(event) =>
-                                        updateSize(
-                                          config.storeId,
-                                          index,
-                                          "price",
-                                          event.target.value
-                                        )
-                                      }
-                                      type="number"
-                                      placeholder="0.00"
-                                      className="h-11 rounded-xl border border-zinc-200 px-3 text-sm font-bold outline-none transition focus:border-green-700"
-                                    />
+                              <FormInput
+                                label="Sort Order"
+                                value={String(config.sortOrder || 0)}
+                                onChange={(value) =>
+                                  updateStoreConfig(
+                                    config.storeId,
+                                    (prevConfig) => ({
+                                      ...prevConfig,
+                                      sortOrder: cleanNumber(value),
+                                    })
+                                  )
+                                }
+                                type="text"
+                                placeholder="0"
+                              />
+                            </div>
+
+                            {categoryUsesSizes ? (
+                              <details
+                                className="rounded-[22px] border border-zinc-200 bg-zinc-50 p-4"
+                                open
+                              >
+                                <summary className="cursor-pointer list-none">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <label className="block text-sm font-black text-zinc-700">
+                                        Product Sizes & Base Prices
+                                      </label>
+
+                                      <p className="mt-1 text-xs font-semibold text-zinc-500">
+                                        Click this section to collapse/expand
+                                        sizes.
+                                      </p>
+                                    </div>
 
                                     <button
                                       type="button"
-                                      onClick={() => removeSize(config.storeId, index)}
-                                      className="h-11 rounded-xl border border-red-100 px-4 text-xs font-black text-red-600 transition hover:bg-red-50"
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        addSize(config.storeId);
+                                      }}
+                                      className="rounded-full bg-green-700 px-4 py-2 text-xs font-black text-white transition hover:bg-green-800"
                                     >
-                                      Remove
+                                      Add Size
                                     </button>
                                   </div>
-                                ))}
-                              </div>
-                            </details>
-                          ) : (
-                            <FormInput
-                              label="Base Price"
-                              value={String(productSizes[0]?.price ?? config.price ?? 0)}
-                              onChange={(value) =>
-                                updateStoreConfig(config.storeId, (prevConfig) => {
-                                  const nextPrice = cleanNumber(value);
-                                  const nextSizes = createRegularProductSize(nextPrice);
+                                </summary>
 
-                                  return {
-                                    ...prevConfig,
-                                    price: nextPrice,
-                                    sizes: nextSizes,
-                                    modifierGroups: syncModifierGroupsWithSizes(
-                                      prevConfig.modifierGroups,
-                                      nextSizes
-                                    ),
-                                  };
-                                })
-                              }
-                              type="number"
-                              placeholder="8.99"
-                            />
-                          )}
+                                <div className="mt-4 space-y-3">
+                                  {productSizes.map((size, index) => (
+                                    <div
+                                      key={size.id || `size-${index}`}
+                                      className="grid gap-3 rounded-2xl border border-zinc-200 bg-white p-3 md:grid-cols-[1fr_160px_auto]"
+                                    >
+                                      <input
+                                        value={size.name}
+                                        onChange={(event) =>
+                                          updateSize(
+                                            config.storeId,
+                                            index,
+                                            "name",
+                                            event.target.value
+                                          )
+                                        }
+                                        placeholder="Small"
+                                        className="h-11 rounded-xl border border-zinc-200 px-3 text-sm font-bold outline-none transition focus:border-green-700"
+                                      />
 
-                          <details className="rounded-[22px] border border-zinc-200 bg-white p-4">
-                            <summary className="cursor-pointer list-none text-sm font-black text-zinc-700">
-                              Related Upsells
-                            </summary>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        pattern="[0-9]*[.]?[0-9]*"
+                                        onKeyDown={blockBadNumberKeys}
+                                        value={String(size.price)}
+                                        onChange={(event) =>
+                                          updateSize(
+                                            config.storeId,
+                                            index,
+                                            "price",
+                                            sanitizePositiveDecimalInput(
+                                              event.target.value
+                                            )
+                                          )
+                                        }
+                                        placeholder="0.00"
+                                        className="h-11 rounded-xl border border-zinc-200 px-3 text-sm font-bold outline-none transition focus:border-green-700"
+                                      />
 
-                            <div className="mt-3">
-                              {categoryBasedUpsells.length === 0 ? (
-                                <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
-                                  No upsell rules found for this category.
-                                </div>
-                              ) : (
-                                <div className="grid gap-2 sm:grid-cols-2">
-                                  {categoryBasedUpsells.map((rule, index) => {
-                                    const ruleId = getSafeId(rule, `upsell-${index}`);
-                                    const selected = config.relatedUpsells?.includes(ruleId);
-
-                                    return (
                                       <button
                                         type="button"
-                                        key={ruleId}
-                                        onClick={() => toggleUpsell(config.storeId, ruleId)}
-                                        className={`rounded-2xl border px-4 py-3 text-left text-sm font-black transition ${
-                                          selected
-                                            ? "border-green-700 bg-green-50 text-green-800"
-                                            : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-                                        }`}
+                                        onClick={() =>
+                                          removeSize(config.storeId, index)
+                                        }
+                                        className="h-11 rounded-xl border border-red-100 px-4 text-xs font-black text-red-600 transition hover:bg-red-50"
                                       >
-                                        <span className="block">
-                                          {rule.offer || rule.name || "Upsell Offer"}
-                                        </span>
+                                        Remove
                                       </button>
-                                    );
-                                  })}
+                                    </div>
+                                  ))}
                                 </div>
-                              )}
-                            </div>
-                          </details>
+                              </details>
+                            ) : (
+                              <FormInput
+                                label="Base Price"
+                                value={String(
+                                  productSizes[0]?.price ?? config.price ?? 0
+                                )}
+                                onChange={(value) =>
+                                  updateStoreConfig(
+                                    config.storeId,
+                                    (prevConfig) => {
+                                      const nextPrice = cleanNumber(value);
+                                      const nextSizes =
+                                        createRegularProductSize(nextPrice);
 
-                          <details className="rounded-[22px] border border-zinc-200 bg-white p-4">
-                            <summary className="cursor-pointer list-none">
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-sm font-black text-zinc-700">
-                                  Assigned Modifier Groups
-                                </span>
-                                <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-black text-zinc-600">
-                                  {config.modifierGroups.length} selected
-                                </span>
-                              </div>
-                            </summary>
+                                      return {
+                                        ...prevConfig,
+                                        price: nextPrice,
+                                        sizes: nextSizes,
+                                        modifierGroups:
+                                          syncModifierGroupsWithSizes(
+                                            prevConfig.modifierGroups,
+                                            nextSizes
+                                          ),
+                                      };
+                                    }
+                                  )
+                                }
+                                type="text"
+                                placeholder="8.99"
+                              />
+                            )}
 
-                            <div className="mt-4">
-                              {assignedModifierGroups.length === 0 ? (
-                                <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
-                                  No modifier group is assigned to this store/category yet.
-                                </div>
-                              ) : (
-                                <div className="space-y-3">
-                                  {assignedModifierGroups.map((group, index) => {
-                                    const groupId = getGlobalModifierGroupId(group, `modifier-${index}`);
-                                    const selected = getGroupSelected(config.modifierGroups, group, `modifier-${index}`);
-                                    const selectedGroup = getSelectedProductGroup(config.modifierGroups, group, `modifier-${index}`);
-                                    const selectedGroupIndex = config.modifierGroups.findIndex((item) => item === selectedGroup);
-                                    const editorKey = `${config.storeId}-${groupId}`;
-                                    const editorOpen = expandedModifierKey === editorKey;
+                            <details className="rounded-[22px] border border-zinc-200 bg-white p-4">
+                              <summary className="cursor-pointer list-none text-sm font-black text-zinc-700">
+                                Related Upsells with Price
+                              </summary>
 
-                                    return (
-                                      <div
-                                        key={groupId}
-                                        className="rounded-[18px] border border-zinc-200 bg-zinc-50 p-3"
-                                      >
-                                        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleModifier(config.storeId, group, index, productSizes)}
-                                            className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left text-sm font-black transition ${
+                              <div className="mt-3">
+                                {categoryBasedUpsells.length === 0 ? (
+                                  <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
+                                    No upsell items found for this
+                                    store/category.
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {categoryBasedUpsells.map(
+                                      (rule, index) => {
+                                        const ruleId = getUpsellId(
+                                          rule,
+                                          `upsell-${index}`
+                                        );
+
+                                        const selectedUpsell =
+                                          getSelectedRelatedUpsell(
+                                            config.relatedUpsells,
+                                            ruleId
+                                          );
+
+                                        const selected = Boolean(
+                                          selectedUpsell
+                                        );
+
+                                        return (
+                                          <div
+                                            key={ruleId}
+                                            className={`rounded-2xl border p-3 transition ${
                                               selected
-                                                ? "border-green-700 bg-green-50 text-green-800"
-                                                : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                                                ? "border-green-700 bg-green-50"
+                                                : "border-zinc-200 bg-white"
                                             }`}
                                           >
-                                            <span>{group.name}</span>
-                                            <span className="text-xs">
-                                              {selected ? "Selected" : "Click to add"}
-                                            </span>
-                                          </button>
+                                            <div className="grid gap-3 md:grid-cols-[1fr_160px_auto]">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  toggleUpsell(
+                                                    config.storeId,
+                                                    rule,
+                                                    `upsell-${index}`
+                                                  )
+                                                }
+                                                className={`rounded-xl px-4 py-3 text-left text-sm font-black transition ${
+                                                  selected
+                                                    ? "bg-green-700 text-white"
+                                                    : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                                                }`}
+                                              >
+                                                <span className="block truncate">
+                                                  {getUpsellName(rule)}
+                                                </span>
+                                                <span className="mt-1 block text-[11px] font-bold opacity-75">
+                                                  {selected
+                                                    ? "Selected"
+                                                    : "Click to add"}
+                                                </span>
+                                              </button>
 
-                                          {selected && (
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setExpandedModifierKey((current) =>
-                                                  current === editorKey ? "" : editorKey
-                                                )
-                                              }
-                                              className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-xs font-black text-zinc-700 transition hover:bg-zinc-50"
-                                            >
-                                              {editorOpen ? "Hide Prices" : "Edit Prices"}
-                                            </button>
-                                          )}
-                                        </div>
+                                              <input
+                                                type="text"
+                                                inputMode="decimal"
+                                                pattern="[0-9]*[.]?[0-9]*"
+                                                disabled={!selected}
+                                                onKeyDown={blockBadNumberKeys}
+                                                value={String(
+                                                  selectedUpsell?.price ?? 0
+                                                )}
+                                                onChange={(event) =>
+                                                  updateUpsellPrice(
+                                                    config.storeId,
+                                                    ruleId,
+                                                    sanitizePositiveDecimalInput(
+                                                      event.target.value
+                                                    )
+                                                  )
+                                                }
+                                                placeholder="0.00"
+                                                className="h-12 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-bold outline-none transition focus:border-green-700 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                                              />
 
-                                        {selected && selectedGroup && editorOpen && (
-                                          <div className="mt-4 space-y-3">
-                                            <div className="grid gap-2 text-xs font-black text-zinc-500 md:grid-cols-[180px_1fr]">
-                                              <span>Option</span>
-                                              <span>Price by Size</span>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  toggleUpsell(
+                                                    config.storeId,
+                                                    rule,
+                                                    `upsell-${index}`
+                                                  )
+                                                }
+                                                className={`h-12 rounded-xl px-4 text-xs font-black transition ${
+                                                  selected
+                                                    ? "border border-red-100 bg-white text-red-600 hover:bg-red-50"
+                                                    : "border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                                                }`}
+                                              >
+                                                {selected ? "Remove" : "Add"}
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </details>
+
+                            <details className="rounded-[22px] border border-zinc-200 bg-white p-4">
+                              <summary className="cursor-pointer list-none">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-sm font-black text-zinc-700">
+                                    Assigned Modifier Groups
+                                  </span>
+
+                                  <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-black text-zinc-600">
+                                    {config.modifierGroups.length} selected
+                                  </span>
+                                </div>
+                              </summary>
+
+                              <div className="mt-4">
+                                {assignedModifierGroups.length === 0 ? (
+                                  <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
+                                    No modifier group is assigned to this
+                                    store/category yet.
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {assignedModifierGroups.map(
+                                      (group, index) => {
+                                        const groupId =
+                                          getGlobalModifierGroupId(
+                                            group,
+                                            `modifier-${index}`
+                                          );
+
+                                        const selected = getGroupSelected(
+                                          config.modifierGroups,
+                                          group,
+                                          `modifier-${index}`
+                                        );
+
+                                        const selectedGroup =
+                                          getSelectedProductGroup(
+                                            config.modifierGroups,
+                                            group,
+                                            `modifier-${index}`
+                                          );
+
+                                        const selectedGroupIndex =
+                                          config.modifierGroups.findIndex(
+                                            (item) => item === selectedGroup
+                                          );
+
+                                        const editorKey = `${config.storeId}-${groupId}`;
+                                        const editorOpen =
+                                          expandedModifierKey === editorKey;
+
+                                        return (
+                                          <div
+                                            key={groupId}
+                                            className="rounded-[18px] border border-zinc-200 bg-zinc-50 p-3"
+                                          >
+                                            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  toggleModifier(
+                                                    config.storeId,
+                                                    group,
+                                                    index,
+                                                    productSizes
+                                                  )
+                                                }
+                                                className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left text-sm font-black transition ${
+                                                  selected
+                                                    ? "border-green-700 bg-green-50 text-green-800"
+                                                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                                                }`}
+                                              >
+                                                <span>{group.name}</span>
+                                                <span className="text-xs">
+                                                  {selected
+                                                    ? "Selected"
+                                                    : "Click to add"}
+                                                </span>
+                                              </button>
+
+                                              {selected && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setExpandedModifierKey(
+                                                      (current) =>
+                                                        current === editorKey
+                                                          ? ""
+                                                          : editorKey
+                                                    )
+                                                  }
+                                                  className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-xs font-black text-zinc-700 transition hover:bg-zinc-50"
+                                                >
+                                                  {editorOpen
+                                                    ? "Hide Prices"
+                                                    : "Edit Prices"}
+                                                </button>
+                                              )}
                                             </div>
 
-                                            {selectedGroup.options.length === 0 ? (
-                                              <div className="rounded-2xl border border-dashed border-zinc-200 bg-white p-4 text-sm font-bold text-zinc-500">
-                                                No options found in this modifier group.
-                                              </div>
-                                            ) : (
-                                              selectedGroup.options.map((option, optionIndex) => {
-                                                if (option.status === "Inactive") return null;
-
-                                                return (
-                                                  <div
-                                                    key={`${option.optionId || option.id || option.name}-${optionIndex}`}
-                                                    className="grid gap-3 rounded-2xl border border-zinc-100 bg-white p-3 md:grid-cols-[180px_1fr]"
-                                                  >
-                                                    <div className="flex items-center text-sm font-black text-zinc-800">
-                                                      {option.name}
-                                                    </div>
-
-                                                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                                                      {productSizes.map((size) => (
-                                                        <label
-                                                          key={`${config.storeId}-${option.name}-${size.id}`}
-                                                          className="block"
-                                                        >
-                                                          <span className="mb-1 block text-[11px] font-black uppercase tracking-wide text-zinc-500">
-                                                            {size.name}
-                                                          </span>
-
-                                                          <input
-                                                            type="number"
-                                                            value={String(
-                                                              option.pricesBySize?.[
-                                                                String(size.name || "").trim()
-                                                              ] ?? 0
-                                                            )}
-                                                            onChange={(event) =>
-                                                              updateModifierOptionPrice(
-                                                                config.storeId,
-                                                                selectedGroupIndex,
-                                                                optionIndex,
-                                                                size.name,
-                                                                event.target.value
-                                                              )
-                                                            }
-                                                            className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-bold outline-none transition focus:border-green-700"
-                                                          />
-                                                        </label>
-                                                      ))}
-                                                    </div>
+                                            {selected &&
+                                              selectedGroup &&
+                                              editorOpen && (
+                                                <div className="mt-4 space-y-3">
+                                                  <div className="grid gap-2 text-xs font-black text-zinc-500 md:grid-cols-[180px_1fr]">
+                                                    <span>Option</span>
+                                                    <span>Price by Size</span>
                                                   </div>
-                                                );
-                                              })
-                                            )}
+
+                                                  {selectedGroup.options
+                                                    .length === 0 ? (
+                                                    <div className="rounded-2xl border border-dashed border-zinc-200 bg-white p-4 text-sm font-bold text-zinc-500">
+                                                      No options found in this
+                                                      modifier group.
+                                                    </div>
+                                                  ) : (
+                                                    selectedGroup.options.map(
+                                                      (option, optionIndex) => {
+                                                        if (
+                                                          option.status ===
+                                                          "Inactive"
+                                                        ) {
+                                                          return null;
+                                                        }
+
+                                                        return (
+                                                          <div
+                                                            key={`${
+                                                              option.optionId ||
+                                                              option.id ||
+                                                              option.name
+                                                            }-${optionIndex}`}
+                                                            className="grid gap-3 rounded-2xl border border-zinc-100 bg-white p-3 md:grid-cols-[180px_1fr]"
+                                                          >
+                                                            <div className="flex items-center text-sm font-black text-zinc-800">
+                                                              {option.name}
+                                                            </div>
+
+                                                            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                                              {productSizes.map(
+                                                                (size) => (
+                                                                  <label
+                                                                    key={`${config.storeId}-${option.name}-${size.id}`}
+                                                                    className="block"
+                                                                  >
+                                                                    <span className="mb-1 block text-[11px] font-black uppercase tracking-wide text-zinc-500">
+                                                                      {size.name}
+                                                                    </span>
+
+                                                                    <input
+                                                                      type="text"
+                                                                      inputMode="decimal"
+                                                                      pattern="[0-9]*[.]?[0-9]*"
+                                                                      onKeyDown={
+                                                                        blockBadNumberKeys
+                                                                      }
+                                                                      value={String(
+                                                                        option
+                                                                          .pricesBySize?.[
+                                                                          String(
+                                                                            size.name ||
+                                                                              ""
+                                                                          ).trim()
+                                                                        ] ?? 0
+                                                                      )}
+                                                                      onChange={(
+                                                                        event
+                                                                      ) =>
+                                                                        updateModifierOptionPrice(
+                                                                          config.storeId,
+                                                                          selectedGroupIndex,
+                                                                          optionIndex,
+                                                                          size.name,
+                                                                          sanitizePositiveDecimalInput(
+                                                                            event
+                                                                              .target
+                                                                              .value
+                                                                          )
+                                                                        )
+                                                                      }
+                                                                      className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-bold outline-none transition focus:border-green-700"
+                                                                    />
+                                                                  </label>
+                                                                )
+                                                              )}
+                                                            </div>
+                                                          </div>
+                                                        );
+                                                      }
+                                                    )
+                                                  )}
+                                                </div>
+                                              )}
                                           </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          </details>
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
-                          This product is disabled for this store. Turn on Available if this store should sell it.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()
-              ) : null}
+                                        );
+                                      }
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </details>
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4 text-sm font-bold text-zinc-500">
+                            This product is disabled for this store. Turn on
+                            Available if this store should sell it.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
+                : null}
             </div>
           )}
         </div>
@@ -1984,6 +2447,7 @@ const ProductForm = forwardRef<ProductFormRef, ProductFormProps>(
     );
   }
 );
+
 ProductForm.displayName = "ProductForm";
 
 export default ProductForm;

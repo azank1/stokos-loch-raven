@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import connectDB from "@/lib/mongodb";
 import ProductStoreConfig from "@/models/productstoreconfig";
+import UpsellRule from "@/models/upsellrule";
 import Category from "@/models/category";
 import CategoryStoreConfig from "@/models/categorystoreconfig";
 
@@ -65,6 +66,74 @@ function cleanProductStatus(value: unknown) {
   const status = cleanString(value);
   if (["Active", "Draft", "Hidden", "Inactive"].includes(status)) return status;
   return "Active";
+}
+
+type ProductRelatedUpsellPayload = {
+  upsellId: string;
+  name: string;
+  price: number;
+};
+
+async function resolveRelatedUpsells(
+  value: unknown
+): Promise<ProductRelatedUpsellPayload[]> {
+  const rawItems = Array.isArray(value) ? value : [];
+  const normalized = rawItems
+    .map((item: any, index): ProductRelatedUpsellPayload | null => {
+      if (typeof item === "string" || typeof item === "number") {
+        const upsellId = cleanString(item);
+        if (!upsellId) return null;
+        return { upsellId, name: "", price: 0 };
+      }
+
+      if (!item || typeof item !== "object") return null;
+
+      const name = cleanString(
+        item.name || item.offer || item.title || item.label || item.upsellName
+      );
+      const upsellId = cleanString(
+        item.upsellId || item._id || item.id || item.slug || slugify(name)
+      );
+
+      if (!upsellId && !name) return null;
+
+      return {
+        upsellId: upsellId || slugify(name) || `upsell-${index + 1}`,
+        name,
+        price: cleanNumber(item.price),
+      };
+    })
+    .filter(Boolean) as ProductRelatedUpsellPayload[];
+
+  const objectIds = normalized
+    .map((item) => item.upsellId)
+    .filter((id) => isValidObjectId(id));
+
+  const rules = objectIds.length
+    ? await UpsellRule.find({ _id: { $in: objectIds } })
+        .select("name offer slug")
+        .lean()
+    : [];
+
+  const namesById = new Map<string, string>();
+
+  rules.forEach((rule: any) => {
+    const id = cleanString(rule._id);
+    const name = cleanString(rule.name || rule.offer || rule.slug);
+    if (id && name) namesById.set(id, name);
+  });
+
+  const unique = new Map<string, ProductRelatedUpsellPayload>();
+
+  normalized.forEach((item) => {
+    unique.set(item.upsellId, {
+      upsellId: item.upsellId,
+      name: item.name || namesById.get(item.upsellId) || item.upsellId,
+      price: cleanNumber(item.price),
+    });
+  });
+
+  return Array.from(unique.values());
 }
 
 function cleanSizes(value: unknown, fallbackPrice: unknown) {
@@ -269,9 +338,7 @@ async function buildPayload(body: any) {
           .filter(Boolean)
       )
     ),
-    relatedUpsells: Array.isArray(body.relatedUpsells)
-      ? body.relatedUpsells.map((item: unknown) => cleanString(item)).filter(Boolean)
-      : [],
+    relatedUpsells: await resolveRelatedUpsells(body.relatedUpsells),
     upsell: body.upsell || "",
     status: cleanProductStatus(body.status),
     sortOrder: Number(body.sortOrder || 0),

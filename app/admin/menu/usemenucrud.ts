@@ -9,6 +9,7 @@ import type {
   Product,
   ProductModifierGroup,
   ProductModifierOption,
+  ProductRelatedUpsell,
   ProductSize,
   UpsellRule,
 } from "./types";
@@ -408,6 +409,46 @@ function normalizePriceNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function normalizeRelatedUpsells(value: unknown): ProductRelatedUpsell[] {
+  const rawItems = safeArray<unknown>(value);
+  const unique = new Map<string, ProductRelatedUpsell>();
+
+  rawItems.forEach((item: any, index) => {
+    if (typeof item === "string" || typeof item === "number") {
+      const upsellId = String(item || "").trim();
+      if (!upsellId) return;
+
+      unique.set(upsellId, {
+        upsellId,
+        name: upsellId,
+        price: 0,
+      });
+      return;
+    }
+
+    if (!item || typeof item !== "object") return;
+
+    const name = String(
+      item.name || item.offer || item.title || item.label || item.upsellName || ""
+    ).trim();
+    const upsellId = String(
+      item.upsellId || item._id || item.id || item.slug || slugifyValue(name)
+    ).trim();
+
+    if (!upsellId && !name) return;
+
+    const key = upsellId || slugifyValue(name) || `upsell-${index + 1}`;
+
+    unique.set(key, {
+      upsellId: key,
+      name: name || key,
+      price: normalizePriceNumber(item.price),
+    });
+  });
+
+  return Array.from(unique.values());
+}
+
 function normalizeProductSizes(value: unknown, fallbackPrice: unknown): ProductSize[] {
   const rawSizes = safeArray<unknown>(value);
 
@@ -618,7 +659,7 @@ function normalizeStoreConfig(config: unknown, fallbackProduct?: Product) {
           .filter(Boolean),
       ])
     ),
-    relatedUpsells: safeArray<string>(obj.relatedUpsells),
+    relatedUpsells: normalizeRelatedUpsells(obj.relatedUpsells),
     upsell: String(obj.upsell || ""),
     status: obj.status || "Active",
     sortOrder: Number(obj.sortOrder || 0),
@@ -678,7 +719,7 @@ function normalizeProduct(product: Product): Product {
     image: product.image || "",
     modifierGroups,
     modifierGroupIds,
-    relatedUpsells: safeArray<string>(sourceForStoreFields.relatedUpsells),
+    relatedUpsells: normalizeRelatedUpsells(sourceForStoreFields.relatedUpsells),
     upsell: String(sourceForStoreFields.upsell || ""),
     status: primaryConfig?.status || product.status || "Active",
     sortOrder: Number(primaryConfig?.sortOrder || product.sortOrder || 0),
@@ -852,38 +893,186 @@ function normalizeModifier(modifier: ModifierGroup): ModifierGroup {
   };
 }
 
-function normalizeUpsell(upsell: UpsellRule): UpsellRule {
-  const triggerCategoryId = String(
-    (upsell as any).triggerCategoryId || ""
+function normalizeUpsellStoreConfig(config: unknown, index: number) {
+  if (!config || typeof config !== "object") return null;
+
+  const obj = config as {
+    _id?: unknown;
+    id?: unknown;
+    upsellId?: unknown;
+    storeId?: unknown;
+    storeSlug?: unknown;
+    store?: unknown;
+    categoryId?: unknown;
+    category?: unknown;
+    categoryName?: unknown;
+    categoryType?: unknown;
+    triggerCategoryName?: unknown;
+    available?: unknown;
+    status?: unknown;
+    sortOrder?: unknown;
+  };
+
+  const storeId = normalizeStoreValue(
+    obj.storeId || obj.storeSlug || obj.store
+  );
+
+  if (!storeId) return null;
+
+  const status = ["Active", "Paused", "Inactive"].includes(
+    String(obj.status || "")
+  )
+    ? (String(obj.status) as UpsellRule["status"])
+    : "Active";
+
+  const categoryName = String(
+    obj.categoryName || obj.categoryType || obj.triggerCategoryName || ""
   ).trim();
 
-  const triggerCategoryName = String(
-    (upsell as any).triggerCategoryName ||
+  return {
+    _id: obj._id ? String(obj._id) : undefined,
+    id: String(obj._id || obj.id || "").trim(),
+    upsellId: String(obj.upsellId || "").trim(),
+    storeId,
+    categoryId: String(obj.categoryId || obj.category || "").trim(),
+    categoryName,
+    available: obj.available !== false && status !== "Inactive",
+    status,
+    sortOrder: Number(obj.sortOrder ?? index),
+  };
+}
+
+function normalizeUpsellStoreConfigs(upsell: UpsellRule) {
+  const directConfigs = safeArray<unknown>((upsell as any).storeConfigs)
+    .map((config, index) => normalizeUpsellStoreConfig(config, index))
+    .filter(Boolean) as Array<{
+    _id?: string;
+    id?: string;
+    upsellId?: string;
+    storeId: string;
+    categoryId: string;
+    categoryName: string;
+    available: boolean;
+    status: UpsellRule["status"];
+    sortOrder?: number;
+  }>;
+
+  if (directConfigs.length > 0) {
+    return directConfigs;
+  }
+
+  const fallbackCategoryId = String(
+    (upsell as any).categoryId || (upsell as any).triggerCategoryId || ""
+  ).trim();
+
+  const fallbackCategoryName = String(
+    (upsell as any).categoryName ||
+      (upsell as any).categoryType ||
+      (upsell as any).triggerCategoryName ||
       safeArray<string>((upsell as any).appliesToCategories)[0] ||
       ""
   ).trim();
 
-  const offerProductIds = safeArray<unknown>(
-    (upsell as any).offerProductIds
-  )
-    .map((item) => String(item || "").trim())
+  const storeIds = safeArray<unknown>((upsell as any).storeIds)
+    .map((storeId) => normalizeStoreValue(storeId))
     .filter(Boolean);
+
+  if (storeIds.length > 0) {
+    return Array.from(new Set(storeIds)).map((storeId, index) => ({
+      storeId,
+      categoryId: fallbackCategoryId,
+      categoryName: fallbackCategoryName,
+      available: true,
+      status: "Active" as UpsellRule["status"],
+      sortOrder: index,
+    }));
+  }
+
+  const storeId = normalizeStoreValue((upsell as any).storeId || "towson");
+
+  return storeId
+    ? [
+        {
+          storeId,
+          categoryId: fallbackCategoryId,
+          categoryName: fallbackCategoryName,
+          available: true,
+          status: "Active" as UpsellRule["status"],
+          sortOrder: 0,
+        },
+      ]
+    : [];
+}
+
+function normalizeUpsell(upsell: UpsellRule): UpsellRule {
+  const storeConfigs = normalizeUpsellStoreConfigs(upsell);
+
+  const activeStoreIds = Array.from(
+    new Set(
+      storeConfigs
+        .filter((config) => config.available && config.status !== "Inactive")
+        .map((config) => config.storeId)
+        .filter(Boolean)
+    )
+  );
+
+  const allStoreIds = Array.from(
+    new Set(storeConfigs.map((config) => config.storeId).filter(Boolean))
+  );
+
+  const firstActiveConfig =
+    storeConfigs.find((config) => config.available && config.status !== "Inactive") ||
+    storeConfigs[0];
+
+  const categoryId = String(
+    (upsell as any).categoryId ||
+      firstActiveConfig?.categoryId ||
+      (upsell as any).triggerCategoryId ||
+      ""
+  ).trim();
+
+  const categoryName = String(
+    (upsell as any).categoryName ||
+      firstActiveConfig?.categoryName ||
+      (upsell as any).categoryType ||
+      (upsell as any).triggerCategoryName ||
+      safeArray<string>((upsell as any).appliesToCategories)[0] ||
+      ""
+  ).trim();
+
+  const name = String(
+    (upsell as any).name || (upsell as any).offer || "Upsell Item"
+  ).trim();
 
   return {
     ...upsell,
-    triggerCategoryId,
-    triggerCategoryName,
-    offerProductIds,
-    trigger:
-      upsell.trigger ||
-      (triggerCategoryName ? `Any ${triggerCategoryName}` : "Any Category Product"),
-    offer:
-      upsell.offer ||
-      `${offerProductIds.length} offer product${
-        offerProductIds.length === 1 ? "" : "s"
-      }`,
-    appliesToCategories: triggerCategoryName ? [triggerCategoryName] : [],
+
+    storeId: String(
+      (upsell as any).storeId || activeStoreIds[0] || allStoreIds[0] || "towson"
+    ).trim(),
+    storeIds: activeStoreIds.length ? activeStoreIds : allStoreIds,
+    storeConfigs,
+
+    name,
+    image: String((upsell as any).image || "").trim(),
+    description: String((upsell as any).description || "").trim(),
+
+    categoryId,
+    categoryName,
+    categoryType: String((upsell as any).categoryType || categoryName || "").trim(),
+
+    // Legacy fields are kept for old screens/indexes, but the new flow does not use products.
+    triggerCategoryId: String((upsell as any).triggerCategoryId || categoryId || "").trim(),
+    triggerCategoryName: String((upsell as any).triggerCategoryName || categoryName || "").trim(),
+    offerProductIds: [],
+    trigger: categoryName,
+    offer: name,
+    appliesToCategories: categoryName ? [categoryName] : [],
+    appliesToProducts: [],
+
+    sortOrder: Number((upsell as any).sortOrder || 0),
     status: upsell.status || "Active",
+    updatedAt: (upsell as any).updatedAt || new Date().toISOString(),
   } as UpsellRule;
 }
 
@@ -896,6 +1085,8 @@ function getEntityKey(item: unknown) {
     offer?: unknown;
     category?: unknown;
     categoryId?: unknown;
+    categoryName?: unknown;
+    categoryType?: unknown;
     appliesTo?: unknown;
     appliesToCategories?: unknown;
     price?: unknown;
@@ -915,7 +1106,14 @@ function getEntityKey(item: unknown) {
     .trim()
     .toLowerCase();
 
-  const category = String(obj.categoryId || obj.category || "")
+  const configCategories = storeConfigs
+    .map((config) => String(config?.categoryName || config?.categoryId || "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(",");
+
+  const category = String(
+    obj.categoryName || obj.categoryType || obj.categoryId || obj.category || configCategories || ""
+  )
     .trim()
     .toLowerCase();
 

@@ -9,6 +9,64 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function cleanNumber(value: unknown) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? Math.max(0, number) : 0;
+}
+
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
+
+function cleanRelatedUpsells(value: unknown) {
+  const rawItems = Array.isArray(value) ? value : [];
+  const unique = new Map<string, { upsellId: string; name: string; price: number }>();
+
+  rawItems.forEach((item: any, index) => {
+    if (typeof item === "string" || typeof item === "number") {
+      const upsellId = cleanString(item);
+      if (!upsellId) return;
+
+      unique.set(upsellId, {
+        upsellId,
+        name: upsellId,
+        price: 0,
+      });
+      return;
+    }
+
+    if (!item || typeof item !== "object") return;
+
+    const name = cleanString(
+      item.name || item.offer || item.title || item.label || item.upsellName
+    );
+    const upsellId = cleanString(
+      item.upsellId || item._id || item.id || item.slug || slugify(name)
+    );
+
+    if (!upsellId && !name) return;
+
+    const key = upsellId || slugify(name) || `upsell-${index + 1}`;
+
+    unique.set(key, {
+      upsellId: key,
+      name: name || key,
+      price: cleanNumber(item.price),
+    });
+  });
+
+  return Array.from(unique.values());
+}
+
+const ProductRelatedUpsellSchema = new Schema(
+  {
+    upsellId: { type: String, required: true, trim: true },
+    name: { type: String, required: true, trim: true },
+    price: { type: Number, default: 0, min: 0 },
+  },
+  { _id: false }
+);
+
 const ProductSchema = new Schema(
   {
     // Product Master = common/global data only.
@@ -62,8 +120,12 @@ const ProductSchema = new Schema(
     sizes: { type: Array, default: [] },
     modifierGroups: { type: Array, default: [] },
     modifierGroupIds: { type: [String], default: [] },
-    relatedUpsells: { type: [String], default: [] },
+
+    // New structure: [{ upsellId, name, price }].
+    // Kept on product master only for legacy compatibility; store-wise value lives in ProductStoreConfig.
+    relatedUpsells: { type: [ProductRelatedUpsellSchema], default: [] },
     upsell: { type: String, default: "" },
+
     status: {
       type: String,
       enum: ["Active", "Draft", "Hidden", "Inactive"],
@@ -107,6 +169,8 @@ ProductSchema.pre("validate", function () {
   if (!doc.updatedAt) {
     doc.updatedAt = "Today";
   }
+
+  doc.relatedUpsells = cleanRelatedUpsells(doc.relatedUpsells);
 });
 
 ProductSchema.index({ slug: 1 });

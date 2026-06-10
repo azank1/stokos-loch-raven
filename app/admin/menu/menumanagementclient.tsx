@@ -506,7 +506,7 @@ export default function MenuManagementClient() {
 
               <p className="mt-3 max-w-2xl text-sm leading-6 text-white/75 md:text-base">
                 Manage store products, categories, modifier groups, toppings,
-                sauces, pricing, and upsell rules from one dashboard.
+                sauces, pricing, and independent upsell items from one dashboard.
               </p>
             </div>
 
@@ -652,14 +652,15 @@ export default function MenuManagementClient() {
         )}
 
         {activeTab === "products" && (
-          <ProductTable
-            products={filteredProducts}
-            categories={categories}
-            stores={stores}
-            selectedStoreId={selectedStoreFilter}
-            onEdit={(product) => setModal({ type: "products", item: product })}
-            onDelete={(id) => handleDelete("products", id)}
-          />
+    <ProductTable
+  products={filteredProducts}
+  categories={categories}
+  stores={stores}
+  upsellRules={upsellRules}
+  selectedStoreId={selectedStoreFilter}
+  onEdit={(product) => setModal({ type: "products", item: product })}
+  onDelete={(id) => handleDelete("products", id)} 
+  />
         )}
 
         {activeTab === "categories" && (
@@ -690,7 +691,6 @@ export default function MenuManagementClient() {
     <UpsellTable
   upsellRules={visibleUpsellRules}
   stores={stores}
-  products={products}
   onEdit={(upsell) => setModal({ type: "upsells", item: upsell })}
   onDelete={(id) => handleDelete("upsells", id)}
 />
@@ -698,7 +698,7 @@ export default function MenuManagementClient() {
       </section>
 
       {modal && (
-   <MenuModal
+<MenuModal
   key={`${modal.type}-${getSafeId(modal.item) || "new"}`}
   stores={stores}
   type={modal.type}
@@ -707,6 +707,7 @@ export default function MenuManagementClient() {
   categories={categories}
   modifierGroups={modifierGroups}
   upsellRules={upsellRules}
+  selectedStoreId={selectedStoreFilter}
   onClose={() => setModal(null)}
   onSave={handleSave}
 />
@@ -793,9 +794,20 @@ function getItemStoreId(item: unknown) {
     ? (obj.storeConfigs as Array<{ storeId?: unknown }>)
     : [];
 
-  const firstConfigStoreId = storeConfigs
+  const activeConfigStoreId = storeConfigs
+    .filter((config: any) => {
+      const available = config.available !== false;
+      const active = config.status !== "Inactive";
+      return available && active;
+    })
     .map((config) => normalizeStoreValue(config.storeId))
     .find(Boolean);
+
+  const firstConfigStoreId =
+    activeConfigStoreId ||
+    storeConfigs
+      .map((config) => normalizeStoreValue(config.storeId))
+      .find(Boolean);
 
   return (
     firstConfigStoreId ||
