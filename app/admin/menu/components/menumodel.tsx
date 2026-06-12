@@ -438,7 +438,7 @@ const selectedStoreProducts = useMemo(() => {
         <ModifierGroupForm
           key={`modifier-form-${getSafeId(item) || "new"}`}
           ref={modifierRef}
-          item={item as ModifierGroup | null}
+          item={item as any}
           categories={categories}
           stores={storeOptions}
           selectedStoreId={firstStoreId}
