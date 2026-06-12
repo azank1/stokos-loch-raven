@@ -177,31 +177,14 @@ function getApiUrl(type: MenuEntity) {
   return `/api/admin/menu/${API_ROUTES[type]}`;
 }
 
-type ApiGetOptions = {
-  storeId?: string;
-  category?: string;
-  search?: string;
-  signal?: AbortSignal;
-};
-
-async function apiGet<T>(
-  type: MenuEntity,
-  options: ApiGetOptions = {}
-): Promise<T[]> {
+async function apiGet<T>(type: MenuEntity): Promise<T[]> {
   try {
-    const params = new URLSearchParams();
-
-    if (options.storeId) params.set("storeId", options.storeId);
-    if (options.category) params.set("category", options.category);
-    if (options.search) params.set("search", options.search);
-
-    const query = params.toString();
-    const url = query ? `${getApiUrl(type)}?${query}` : getApiUrl(type);
-
-    const res = await fetch(url, {
+    const res = await fetch(`${getApiUrl(type)}?t=${Date.now()}`, {
       method: "GET",
       cache: "no-store",
-      signal: options.signal,
+      headers: {
+        "Cache-Control": "no-cache",
+      },
     });
 
     const json = await res.json().catch(() => null);
@@ -212,48 +195,9 @@ async function apiGet<T>(
     }
 
     return getArrayFromResponse<T>(json, type);
-  } catch (error: any) {
-    if (error?.name === "AbortError") return [];
+  } catch (error) {
     console.error(`Failed to load ${type}`, error);
     return [];
-  }
-}
-
-
-async function apiGetOne<T extends object>(
-  type: MenuEntity,
-  id: string,
-  options: ApiGetOptions = {}
-): Promise<T | null> {
-  const cleanId = String(id || "").trim();
-  if (!cleanId) return null;
-
-  try {
-    const params = new URLSearchParams();
-    params.set("id", cleanId);
-    params.set("detail", "1");
-
-    if (options.storeId) params.set("storeId", options.storeId);
-    if (options.category) params.set("category", options.category);
-
-    const res = await fetch(`${getApiUrl(type)}?${params.toString()}`, {
-      method: "GET",
-      cache: "no-store",
-      signal: options.signal,
-    });
-
-    const json = await res.json().catch(() => null);
-
-    if (!res.ok || json?.success === false) {
-      console.error(`Failed to load ${type} detail`, json);
-      return null;
-    }
-
-    return getItemFromResponse<T>(json, type, {} as T);
-  } catch (error: any) {
-    if (error?.name === "AbortError") return null;
-    console.error(`Failed to load ${type} detail`, error);
-    return null;
   }
 }
 
@@ -1311,107 +1255,36 @@ export function useMenuCrud() {
   const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
   const [upsellRules, setUpsellRules] = useState<UpsellRule[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [isProductsLoading, setIsProductsLoading] = useState(false);
-  const [isMetaLoading, setIsMetaLoading] = useState(false);
 
   const firstLoadDone = useRef(false);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadMenu = useCallback(async () => {
-    abortControllerRef.current?.abort();
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
     if (!firstLoadDone.current) {
       setIsLoaded(false);
     }
 
-    setIsMetaLoading(true);
-    setIsProductsLoading(true);
+    const [productsData, categoriesData, modifiersData, upsellsData] =
+      await Promise.all([
+        apiGet<Product>("products"),
+        apiGet<Category>("categories"),
+        apiGet<ModifierGroup>("modifier-groups"),
+        apiGet<UpsellRule>("upsells"),
+      ]);
 
-    const finishFirstPaint = () => {
-      if (!firstLoadDone.current) {
-        firstLoadDone.current = true;
-        setIsLoaded(true);
-      }
-    };
+    setProducts(productsData.map(normalizeProduct));
+    setCategories(
+      sortBySortOrder(categoriesData.map(normalizeCategory) as Category[])
+    );
+    setModifierGroups(modifiersData.map(normalizeModifier));
+    setUpsellRules(upsellsData.map(normalizeUpsell));
 
-    // Load products independently. Product table should not wait for
-    // categories/modifier-groups/upsells, because those can be heavier.
-    apiGet<Product>("products", { signal: controller.signal })
-      .then((productsData) => {
-        if (controller.signal.aborted) return;
-
-        setProducts(productsData.map(normalizeProduct));
-        finishFirstPaint();
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-
-        console.error("Failed to load products", error);
-        finishFirstPaint();
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        setIsProductsLoading(false);
-      });
-
-    // Load secondary data separately. Product rows can render first; filters,
-    // modifier forms, and upsell data will hydrate immediately after.
-    Promise.all([
-      apiGet<Category>("categories", { signal: controller.signal }),
-      apiGet<ModifierGroup>("modifier-groups", { signal: controller.signal }),
-      apiGet<UpsellRule>("upsells", { signal: controller.signal }),
-    ])
-      .then(([categoriesData, modifiersData, upsellsData]) => {
-        if (controller.signal.aborted) return;
-
-        setCategories(
-          sortBySortOrder(categoriesData.map(normalizeCategory) as Category[])
-        );
-        setModifierGroups(modifiersData.map(normalizeModifier));
-        setUpsellRules(upsellsData.map(normalizeUpsell));
-        finishFirstPaint();
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-
-        console.error("Failed to load menu meta data", error);
-        finishFirstPaint();
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        setIsMetaLoading(false);
-      });
+    firstLoadDone.current = true;
+    setIsLoaded(true);
   }, []);
 
   useEffect(() => {
     loadMenu();
-
-    return () => {
-      abortControllerRef.current?.abort();
-    };
   }, [loadMenu]);
-
-  const getProductDetail = useCallback(async (productId: string) => {
-    const detail = await apiGetOne<Product>("products", productId);
-
-    if (!detail) return null;
-
-    const normalized = normalizeProduct(detail);
-    const normalizedId = getMongoId(normalized);
-
-    setProducts((prev) => {
-      const exists = prev.some((item) => getMongoId(item) === normalizedId);
-
-      if (!exists) return [normalized, ...prev];
-
-      return updateLocalItem(prev, normalized);
-    });
-
-    return normalized;
-  }, []);
 
   const addProduct = async (product: Product) => {
     const tempId = `temp-product-${Date.now()}`;
@@ -1750,8 +1623,6 @@ export function useMenuCrud() {
 
   return {
     isLoaded,
-    isProductsLoading,
-    isMetaLoading,
 
     products,
     categories,
@@ -1761,7 +1632,6 @@ export function useMenuCrud() {
     addProduct,
     updateProduct,
     deleteProduct,
-    getProductDetail,
 
     addCategory,
     updateCategory,

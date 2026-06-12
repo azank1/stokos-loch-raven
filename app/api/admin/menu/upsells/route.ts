@@ -5,47 +5,6 @@ import UpsellRule from "@/models/upsellrule";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type AnyObject = Record<string, any>;
-
-let adminUpsellIndexesPromise: Promise<void> | null = null;
-
-async function ensureAdminUpsellIndexes() {
-  if (!adminUpsellIndexesPromise) {
-    adminUpsellIndexesPromise = Promise.all([
-      UpsellRule.collection.createIndex({ storeId: 1 }),
-      UpsellRule.collection.createIndex({ storeIds: 1 }),
-      UpsellRule.collection.createIndex({ "storeConfigs.storeId": 1 }),
-      UpsellRule.collection.createIndex({ name: 1 }),
-      UpsellRule.collection.createIndex({ sortOrder: 1, createdAt: -1 }),
-    ]).then(() => undefined);
-  }
-
-  return adminUpsellIndexesPromise;
-}
-
-const UPSELL_LIST_PROJECTION = {
-  storeId: 1,
-  storeIds: 1,
-  storeConfigs: 1,
-  name: 1,
-  image: 1,
-  description: 1,
-  categoryId: 1,
-  categoryName: 1,
-  categoryType: 1,
-  triggerCategoryId: 1,
-  triggerCategoryName: 1,
-  offerProductIds: 1,
-  trigger: 1,
-  offer: 1,
-  appliesToCategories: 1,
-  appliesToProducts: 1,
-  sortOrder: 1,
-  status: 1,
-  createdAt: 1,
-  updatedAt: 1,
-};
-
 function cleanString(value: unknown) {
   return String(value || "").trim();
 }
@@ -78,7 +37,7 @@ function cleanStoreConfigs(value: unknown) {
 
   return value
     .map((config: any, index: number) => {
-      const storeId = cleanString(config?.storeId).toLowerCase();
+      const storeId = cleanString(config?.storeId);
       if (!storeId) return null;
 
       const available = cleanBoolean(config?.available, true);
@@ -101,7 +60,7 @@ function cleanStoreConfigs(value: unknown) {
 
 function buildUpsellPayload(body: any) {
   const storeConfigs = cleanStoreConfigs(body.storeConfigs);
-  const storeIds = cleanStringArray(body.storeIds).map((item) => item.toLowerCase());
+  const storeIds = cleanStringArray(body.storeIds);
 
   const activeConfigs = storeConfigs.filter(
     (config: any) => config.available && config.status !== "Inactive"
@@ -111,7 +70,7 @@ function buildUpsellPayload(body: any) {
 
   const storeId = cleanString(
     body.storeId || primaryConfig?.storeId || storeIds[0] || "towson"
-  ).toLowerCase();
+  );
 
   const categoryId = cleanString(
     body.categoryId || primaryConfig?.categoryId || body.triggerCategoryId || ""
@@ -153,22 +112,14 @@ function buildUpsellPayload(body: any) {
   };
 }
 
-function getErrorMessage(error: any) {
-  if (error?.code === 11000) return "Upsell with this name already exists";
-  if (error?.message) return error.message;
-  return "Something went wrong";
-}
-
 export async function GET(req: Request) {
   try {
     await connectDB();
-    await ensureAdminUpsellIndexes();
 
     const { searchParams } = new URL(req.url);
-    const storeId = cleanString(searchParams.get("storeId")).toLowerCase();
-    const search = cleanString(searchParams.get("search"));
+    const storeId = cleanString(searchParams.get("storeId"));
 
-    const query: AnyObject = {};
+    const query: Record<string, unknown> = {};
 
     if (storeId && storeId !== "all") {
       query.$or = [
@@ -178,33 +129,18 @@ export async function GET(req: Request) {
       ];
     }
 
-    if (search) {
-      query.$and = [
-        ...(query.$and || []),
-        {
-          $or: [
-            { name: { $regex: search, $options: "i" } },
-            { offer: { $regex: search, $options: "i" } },
-            { categoryName: { $regex: search, $options: "i" } },
-          ],
-        },
-      ];
-    }
-
     const upsellRules = await UpsellRule.find(query)
-      .select(UPSELL_LIST_PROJECTION)
       .sort({ sortOrder: 1, createdAt: -1 })
       .lean();
 
     return NextResponse.json({
       success: true,
       data: upsellRules,
-      upsellRules,
     });
   } catch (error) {
     console.error("GET UPSELL RULES ERROR:", error);
     return NextResponse.json(
-      { success: false, data: [], upsellRules: [], message: "Failed to fetch upsell rules" },
+      { success: false, message: "Failed to fetch upsell rules" },
       { status: 500 }
     );
   }
@@ -241,15 +177,22 @@ export async function POST(req: Request) {
     const upsellRule = await UpsellRule.create(payload);
 
     return NextResponse.json(
-      { success: true, data: upsellRule, upsellRule },
+      { success: true, data: upsellRule },
       { status: 201 }
     );
   } catch (error: any) {
     console.error("POST UPSELL RULE ERROR:", error);
 
+    if (error.code === 11000) {
+      return NextResponse.json(
+        { success: false, message: "Upsell with this name already exists" },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
-      { success: false, message: getErrorMessage(error) || "Failed to create upsell" },
-      { status: error?.code === 11000 ? 409 : 500 }
+      { success: false, message: error?.message || "Failed to create upsell" },
+      { status: 500 }
     );
   }
 }
@@ -289,13 +232,20 @@ export async function PATCH(req: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, data: upsellRule, upsellRule });
+    return NextResponse.json({ success: true, data: upsellRule });
   } catch (error: any) {
     console.error("PATCH UPSELL RULE ERROR:", error);
 
+    if (error.code === 11000) {
+      return NextResponse.json(
+        { success: false, message: "Upsell with this name already exists" },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
-      { success: false, message: getErrorMessage(error) || "Failed to update upsell" },
-      { status: error?.code === 11000 ? 409 : 500 }
+      { success: false, message: error?.message || "Failed to update upsell" },
+      { status: 500 }
     );
   }
 }

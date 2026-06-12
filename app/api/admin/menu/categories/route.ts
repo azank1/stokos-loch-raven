@@ -7,44 +7,6 @@ import CategoryStoreConfig from "@/models/categorystoreconfig";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-let adminCategoryIndexesPromise: Promise<void> | null = null;
-
-async function ensureAdminCategoryIndexes() {
-  if (!adminCategoryIndexesPromise) {
-    adminCategoryIndexesPromise = Promise.all([
-      Category.collection.createIndex({ slug: 1 }),
-      Category.collection.createIndex({ name: 1 }),
-      CategoryStoreConfig.collection.createIndex({ storeId: 1, categoryId: 1 }),
-      CategoryStoreConfig.collection.createIndex({ categoryId: 1 }),
-      CategoryStoreConfig.collection.createIndex({ storeId: 1, sortOrder: 1 }),
-    ]).then(() => undefined);
-  }
-
-  return adminCategoryIndexesPromise;
-}
-
-const CATEGORY_LIST_PROJECTION = {
-  name: 1,
-  slug: 1,
-  description: 1,
-  image: 1,
-  status: 1,
-  storeId: 1,
-  sortOrder: 1,
-  createdAt: 1,
-};
-
-const CATEGORY_CONFIG_LIST_PROJECTION = {
-  categoryId: 1,
-  storeId: 1,
-  categoryName: 1,
-  categorySlug: 1,
-  available: 1,
-  status: 1,
-  sortOrder: 1,
-  createdAt: 1,
-};
-
 const slugify = (value: string) =>
   value
     .toLowerCase()
@@ -320,7 +282,6 @@ async function getCategoryRows(storeId?: string | null) {
   }
 
   const configs = await CategoryStoreConfig.find(configQuery)
-    .select(CATEGORY_CONFIG_LIST_PROJECTION)
     .sort({ sortOrder: 1, createdAt: 1 })
     .lean();
 
@@ -333,9 +294,7 @@ async function getCategoryRows(storeId?: string | null) {
     .map((categoryId) => new mongoose.Types.ObjectId(categoryId));
 
   const categories = categoryObjectIds.length
-    ? await Category.find({ _id: { $in: categoryObjectIds } })
-        .select(CATEGORY_LIST_PROJECTION)
-        .lean()
+    ? await Category.find({ _id: { $in: categoryObjectIds } }).lean()
     : [];
 
   const categoriesById = new Map<string, any>();
@@ -362,7 +321,6 @@ async function getCategoryRows(storeId?: string | null) {
     }
 
     const legacyCategories = await Category.find(legacyQuery)
-      .select(CATEGORY_LIST_PROJECTION)
       .sort({ sortOrder: 1, createdAt: 1 })
       .lean();
 
@@ -408,8 +366,6 @@ function getErrorMessage(error: any) {
 export async function GET(req: Request) {
   try {
     await connectDB();
-    await ensureAdminCategoryIndexes();
-
     const { searchParams } = new URL(req.url);
     const storeId = searchParams.get("storeId");
 

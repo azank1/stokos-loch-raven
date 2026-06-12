@@ -71,7 +71,6 @@ export default function MenuManagementClient() {
 
   const {
     isLoaded = true,
-    isProductsLoading = false,
 
     products: crudProductsRaw,
     categories: crudCategoriesRaw,
@@ -81,7 +80,6 @@ export default function MenuManagementClient() {
     addProduct,
     updateProduct,
     deleteProduct,
-    getProductDetail,
 
     addCategory,
     updateCategory,
@@ -121,7 +119,6 @@ export default function MenuManagementClient() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Categories");
   const [modal, setModal] = useState<ModalState>(null);
-  const [editingProductId, setEditingProductId] = useState("");
 
   const [pendingActions, setPendingActions] = useState(0);
   const pendingActionsRef = useRef(0);
@@ -327,27 +324,6 @@ export default function MenuManagementClient() {
       alert("Failed to delete item from database.");
     } finally {
       setPendingActions((count) => Math.max(0, count - 1));
-    }
-  };
-
-  const openProductEdit = async (product: Product) => {
-    const productId = getSafeId(product);
-
-    if (!productId) {
-      setModal({ type: "products", item: product });
-      return;
-    }
-
-    setEditingProductId(productId);
-
-    try {
-      const fullProduct = await getProductDetail(productId);
-      setModal({ type: "products", item: fullProduct || product });
-    } catch (error) {
-      console.error("Failed to load full product detail:", error);
-      setModal({ type: "products", item: product });
-    } finally {
-      setEditingProductId("");
     }
   };
 
@@ -675,28 +651,16 @@ export default function MenuManagementClient() {
           </div>
         )}
 
-        {activeTab === "products" && isProductsLoading && products.length === 0 && (
-          <div className="rounded-2xl border border-green-100 bg-green-50 px-4 py-3 text-sm font-bold text-green-800">
-            Loading products in background...
-          </div>
-        )}
-
-        {activeTab === "products" && editingProductId && (
-          <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">
-            Loading product details...
-          </div>
-        )}
-
-        {activeTab === "products" && !(isProductsLoading && products.length === 0) && (
-          <ProductTable
-            products={filteredProducts}
-            categories={categories}
-            stores={stores}
-            upsellRules={upsellRules}
-            selectedStoreId={selectedStoreFilter}
-            onEdit={(product) => openProductEdit(product)}
-            onDelete={(id) => handleDelete("products", id)}
-          />
+        {activeTab === "products" && (
+    <ProductTable
+  products={filteredProducts}
+  categories={categories}
+  stores={stores}
+  upsellRules={upsellRules}
+  selectedStoreId={selectedStoreFilter}
+  onEdit={(product) => setModal({ type: "products", item: product })}
+  onDelete={(id) => handleDelete("products", id)} 
+  />
         )}
 
         {activeTab === "categories" && (

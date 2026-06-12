@@ -11,107 +11,6 @@ import UpsellRule from "@/models/upsellrule";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-let adminProductIndexesPromise: Promise<void> | null = null;
-
-async function ensureAdminProductIndexes() {
-  if (!adminProductIndexesPromise) {
-    adminProductIndexesPromise = Promise.all([
-      Product.collection.createIndex({ slug: 1 }),
-      Product.collection.createIndex({ name: 1 }),
-      ProductStoreConfig.collection.createIndex({ productId: 1 }),
-      ProductStoreConfig.collection.createIndex({ storeId: 1, productId: 1 }),
-      ProductStoreConfig.collection.createIndex({ storeId: 1, categoryId: 1 }),
-      ProductStoreConfig.collection.createIndex({ storeId: 1, categoryName: 1 }),
-    ]).then(() => undefined);
-  }
-
-  return adminProductIndexesPromise;
-}
-
-const PRODUCT_LIST_PROJECTION = {
-  name: 1,
-  slug: 1,
-  description: 1,
-  image: 1,
-  tags: 1,
-  badge: 1,
-  price: 1,
-  category: 1,
-  categoryId: 1,
-  categoryName: 1,
-  storeId: 1,
-  isPopular: 1,
-  showInPopular: 1,
-  sortOrder: 1,
-  status: 1,
-  updatedAt: 1,
-  createdAt: 1,
-};
-
-const PRODUCT_DETAIL_PROJECTION = {
-  name: 1,
-  slug: 1,
-  description: 1,
-  image: 1,
-  tags: 1,
-  badge: 1,
-  price: 1,
-  sizes: 1,
-  modifierGroups: 1,
-  modifierGroupIds: 1,
-  relatedUpsells: 1,
-  upsell: 1,
-  category: 1,
-  categoryId: 1,
-  categoryName: 1,
-  storeId: 1,
-  isPopular: 1,
-  showInPopular: 1,
-  sortOrder: 1,
-  status: 1,
-  updatedAt: 1,
-  createdAt: 1,
-};
-
-const PRODUCT_CONFIG_LIGHT_PROJECTION = {
-  productId: 1,
-  storeId: 1,
-  categoryId: 1,
-  categoryName: 1,
-  categorySlug: 1,
-  price: 1,
-  isPopular: 1,
-  showInPopular: 1,
-  isAvailable: 1,
-  available: 1,
-  sortOrder: 1,
-  status: 1,
-  createdAt: 1,
-  updatedAt: 1,
-};
-
-const PRODUCT_CONFIG_DETAIL_PROJECTION = {
-  productId: 1,
-  storeId: 1,
-  categoryId: 1,
-  categoryName: 1,
-  categorySlug: 1,
-  price: 1,
-  sizes: 1,
-  modifierGroups: 1,
-  modifierGroupIds: 1,
-  relatedUpsells: 1,
-  upsell: 1,
-  isPopular: 1,
-  showInPopular: 1,
-  isAvailable: 1,
-  available: 1,
-  sortOrder: 1,
-  status: 1,
-  createdAt: 1,
-  updatedAt: 1,
-};
-
 type ProductSizePayload = {
   id: string;
   name: string;
@@ -1071,11 +970,7 @@ function formatProductWithConfigs(
   };
 }
 
-async function getProductConfigs(
-  productIds: string[],
-  query: any = {},
-  options: { detail?: boolean } = {}
-) {
+async function getProductConfigs(productIds: string[], query: any = {}) {
   if (!productIds.length) return [];
 
   const productIdList = productIds.flatMap((productId) => productIdValues(productId));
@@ -1089,11 +984,7 @@ async function getProductConfigs(
   }
 
   return ProductStoreConfig.collection
-    .find(rawQuery, {
-      projection: options.detail
-        ? PRODUCT_CONFIG_DETAIL_PROJECTION
-        : PRODUCT_CONFIG_LIGHT_PROJECTION,
-    })
+    .find(rawQuery)
     .sort({ storeId: 1, sortOrder: 1, createdAt: -1 })
     .toArray();
 }
@@ -1124,16 +1015,14 @@ export async function GET(req: Request) {
   try {
     await connectDB();
 
+    // One-time safety cleanup for old duplicate master products.
+    // await cleanupDuplicateProductMastersBySlug();
+
     const { searchParams } = new URL(req.url);
 
     const storeId = cleanString(searchParams.get("storeId"));
     const category = cleanString(searchParams.get("category"));
     const search = cleanString(searchParams.get("search"));
-    const requestedId = cleanString(
-      searchParams.get("id") || searchParams.get("productId")
-    );
-
-    const wantsDetail = Boolean(requestedId);
 
     const configQuery: any = {};
 
@@ -1149,56 +1038,14 @@ export async function GET(req: Request) {
       }
     }
 
-    if (requestedId) {
-      const productQuery = isValidObjectId(requestedId)
-        ? { _id: new mongoose.Types.ObjectId(requestedId) }
-        : {
-            $or: [
-              { id: requestedId },
-              { slug: requestedId },
-              { name: requestedId },
-            ],
-          };
-
-      const product = await Product.findOne(productQuery)
-        .select(PRODUCT_DETAIL_PROJECTION)
-        .lean();
-
-      if (!product) {
-        return NextResponse.json(
-          { success: false, message: "Product not found", data: null },
-          { status: 404 }
-        );
-      }
-
-      const configFilter = { ...configQuery };
-      const configs = await getProductConfigs(
-        [String(product._id)],
-        configFilter,
-        { detail: true }
-      );
-
-      const data = formatProductWithConfigs(
-        product,
-        configs,
-        storeId && storeId !== "all" ? storeId : null
-      );
-
-      return NextResponse.json({ success: true, data, product: data });
-    }
-
     const shouldFilterByConfig = Object.keys(configQuery).length > 0;
     let productIdsFromConfig: string[] | null = null;
     let filteredConfigs: any[] = [];
 
     if (shouldFilterByConfig) {
-      filteredConfigs = await ProductStoreConfig.collection
-        .find(configQuery, { projection: PRODUCT_CONFIG_LIGHT_PROJECTION })
-        .sort({ sortOrder: 1, createdAt: -1 })
-        .toArray();
-
+      filteredConfigs = await ProductStoreConfig.collection.find(configQuery).toArray();
       productIdsFromConfig = Array.from(
-        new Set(filteredConfigs.map((item) => String(item.productId)).filter(Boolean))
+        new Set(filteredConfigs.map((item) => String(item.productId)))
       );
 
       if (!productIdsFromConfig.length) {
@@ -1209,34 +1056,14 @@ export async function GET(req: Request) {
     const productQuery: any = {};
 
     if (productIdsFromConfig) {
-      const objectIds = productIdsFromConfig
-        .filter((id) => isValidObjectId(id))
-        .map((id) => new mongoose.Types.ObjectId(id));
-
-      productQuery.$or = [
-        ...(objectIds.length ? [{ _id: { $in: objectIds } }] : []),
-        { id: { $in: productIdsFromConfig } },
-        { slug: { $in: productIdsFromConfig } },
-      ];
+      productQuery._id = { $in: productIdsFromConfig };
     }
 
     if (search) {
-      const searchQuery = { $regex: search, $options: "i" };
-
-      productQuery.$and = [
-        ...(productQuery.$and || []),
-        {
-          $or: [
-            { name: searchQuery },
-            { slug: searchQuery },
-            { description: searchQuery },
-          ],
-        },
-      ];
+      productQuery.name = { $regex: search, $options: "i" };
     }
 
     const products = await Product.find(productQuery)
-      .select(wantsDetail ? PRODUCT_DETAIL_PROJECTION : PRODUCT_LIST_PROJECTION)
       .sort({ name: 1, createdAt: -1 })
       .lean();
 
@@ -1245,7 +1072,7 @@ export async function GET(req: Request) {
       ? filteredConfigs.filter((config) =>
           productIds.includes(String(config.productId))
         )
-      : await getProductConfigs(productIds, {}, { detail: false });
+      : await getProductConfigs(productIds);
 
     const configsByProduct = new Map<string, any[]>();
 
@@ -1307,7 +1134,7 @@ export async function POST(req: Request) {
 
     await saveStoreConfigs(String(product._id), body);
 
-    const configs = await getProductConfigs([String(product._id)], {}, { detail: true });
+    const configs = await getProductConfigs([String(product._id)]);
     const data = formatProductWithConfigs(product, configs, normalizeStoreId(body.storeId));
 
     return NextResponse.json({ success: true, data }, { status: 201 });
@@ -1374,7 +1201,7 @@ export async function PATCH(req: Request) {
 
     await saveStoreConfigs(String(product._id), body);
 
-    const configs = await getProductConfigs([String(product._id)], {}, { detail: true });
+    const configs = await getProductConfigs([String(product._id)]);
     const data = formatProductWithConfigs(product, configs, normalizeStoreId(body.storeId));
 
     return NextResponse.json({ success: true, data });
