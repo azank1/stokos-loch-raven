@@ -194,7 +194,7 @@ export default function StartOrder() {
                   <span
                     className={`rounded-full border px-2 py-1 text-xs ${
                       orderType === "pickup"
-                        ? "border-green-700 bg-green-700 text-white"
+                        ? "border-green-700 bg-green-700 text-white "
                         : "border-green-700 text-green-700"
                     }`}
                   >
@@ -266,7 +266,7 @@ export default function StartOrder() {
                       setTime("");
                     }
                   }}
-                  className="h-10 rounded border border-zinc-300 px-3 text-sm font-semibold outline-none"
+                  className="h-10 rounded border border-zinc-300 px-3 text-sm font-semibold outline-none dark:text-black text-black"
                 >
                   {isOrderLaterOnly ? (
                     <>
@@ -286,7 +286,7 @@ export default function StartOrder() {
                   value={time}
                   disabled={isOrderLaterOnly && !day}
                   onChange={(e) => setTime(e.target.value)}
-                  className="h-10 rounded border border-zinc-300 px-3 text-sm font-semibold outline-none disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                  className="h-10 rounded border dark:text-black text-black border-zinc-300 px-3 text-sm font-semibold outline-none disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
                 >
                   {isOrderLaterOnly ? (
                     <>

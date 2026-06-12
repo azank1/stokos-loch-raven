@@ -1,39 +1,217 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 
-const CATEGORIES = [
-  { id: "trending", name: "Popular Menu Items", special: true },
-  { id: "breakfast", name: "Breakfast (served until 11am)" },
-  { id: "deals", name: "Menu Coupons" },
-  { id: "salads", name: "Fresh Salads" },
-  { id: "hot-subs", name: "Hot Subs" },
-  { id: "cold-subs", name: "Cold Sub" },
-  { id: "seafood-subs", name: "Seafood Subs" },
-  { id: "sandwiches", name: "Sandwiches" },
-  { id: "club-sandwiches", name: "Club Sandwiches" },
-  { id: "pizzas", name: "Pizzas" },
-  { id: "specialty-pizzas", name: "Stoko's Specialty Pizzas" },
-  { id: "stromboli", name: "Famous Stromboli" },
-  { id: "calzones", name: "Calzones" },
-  { id: "quesadillas", name: "Quesadillas" },
-  { id: "platters", name: "Platters" },
-  { id: "chicken", name: "Chicken" },
-  { id: "fish-special", name: "Fish Special" },
-  { id: "fish-only", name: "Fish Only" },
-  { id: "pasta", name: "Italian Pasta" },
-  { id: "gyros", name: "Gyros" },
-  { id: "pick-2", name: "Pick 2" },
-  { id: "wrapped", name: "Get Wrapped" },
-  { id: "sides", name: "Side Orders" },
-  { id: "dessert", name: "Dessert" },
-  { id: "beverages", name: "Beverages" },
-];
+export type MenuCategoryTab = {
+  id: string;
+  name: string;
+  slug?: string;
+  description?: string;
+  image?: string;
+  sortOrder?: number;
+};
 
-export default function Categories() {
-  const [active, setActive] = useState("trending");
+type CategoriesProps = {
+  storeSlug?: string;
+  initialCategories?: MenuCategoryTab[] | null;
+};
+
+const POLLING_MS = 3000;
+
+const TRENDING_CATEGORY: MenuCategoryTab = {
+  id: "trending",
+  slug: "trending",
+  name: "Popular Menu Items",
+  description: "",
+  image: "",
+  sortOrder: -1,
+};
+
+function slugify(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function isExpectedNetworkError(error: any) {
+  const message = String(error?.message || error || "").toLowerCase();
+
+  return (
+    error?.name === "AbortError" ||
+    message.includes("failed to fetch") ||
+    message.includes("network error") ||
+    message.includes("load failed")
+  );
+}
+
+function getCategorySectionId(category: Partial<MenuCategoryTab>) {
+  return slugify(category.slug || category.id || category.name || "");
+}
+
+function isPopularCategory(category: Partial<MenuCategoryTab>) {
+  const id = slugify(String(category.id || ""));
+  const slug = slugify(String(category.slug || ""));
+  const name = slugify(String(category.name || ""));
+
+  return (
+    id === "trending" ||
+    slug === "trending" ||
+    name === "trending" ||
+    name === "popular-menu-items" ||
+    name === "popular-items" ||
+    name === "popular-menu-item"
+  );
+}
+
+function normalizeCategories(
+  categories?: Partial<MenuCategoryTab>[] | null
+): MenuCategoryTab[] {
+  const safeCategories = Array.isArray(categories) ? categories : [];
+
+  return safeCategories
+    .map((category) => {
+      const name = String(category?.name || "").trim();
+
+      const sectionId = getCategorySectionId({
+        id: category?.id,
+        slug: category?.slug,
+        name,
+      });
+
+      return {
+        id: sectionId,
+        slug: sectionId,
+        name,
+        description: category?.description || "",
+        image: category?.image || "",
+        sortOrder: Number(category?.sortOrder || 0),
+      };
+    })
+    .filter((category) => category.id && category.name);
+}
+
+function withTrending(
+  categories?: Partial<MenuCategoryTab>[] | null
+): MenuCategoryTab[] {
+  const normalized = normalizeCategories(categories);
+
+  const withoutPopularDuplicate = normalized.filter(
+    (category) => !isPopularCategory(category)
+  );
+
+  return [TRENDING_CATEGORY, ...withoutPopularDuplicate];
+}
+
+function categoriesChanged(
+  oldCategories: MenuCategoryTab[],
+  newCategories: MenuCategoryTab[]
+) {
+  return JSON.stringify(oldCategories) !== JSON.stringify(newCategories);
+}
+
+export default function Categories({
+  storeSlug = "",
+  initialCategories = [],
+}: CategoriesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const normalizedInitialCategories = useMemo(() => {
+    return withTrending(initialCategories);
+  }, [initialCategories]);
+
+  const [categories, setCategories] = useState<MenuCategoryTab[]>(
+    normalizedInitialCategories
+  );
+
+  const [active, setActive] = useState(
+    normalizedInitialCategories[0]?.id || "trending"
+  );
+
+  useEffect(() => {
+    setCategories(normalizedInitialCategories);
+  }, [normalizedInitialCategories]);
+
+  useEffect(() => {
+    if (!categories.length) return;
+
+    const activeExists = categories.some((category) => category.id === active);
+
+    if (!activeExists) {
+      setActive(categories[0]?.id || "trending");
+    }
+  }, [categories, active]);
+
+  useEffect(() => {
+    if (!storeSlug) return;
+
+    let cancelled = false;
+    let controller: AbortController | null = null;
+
+    async function loadLatestCategories() {
+      controller?.abort();
+      controller = new AbortController();
+
+      try {
+        const response = await fetch(
+          `/api/public/menu/categories/${storeSlug}?t=${Date.now()}`,
+          {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              "Cache-Control": "no-cache",
+            },
+          }
+        );
+
+        if (!response.ok) {
+          return;
+        }
+
+        let data: any = null;
+
+        try {
+          data = await response.json();
+        } catch {
+          return;
+        }
+
+        const latestCategories = withTrending(
+          Array.isArray(data?.categories) ? data.categories : []
+        );
+
+        if (cancelled) return;
+
+        setCategories((currentCategories) => {
+          if (categoriesChanged(currentCategories, latestCategories)) {
+            return latestCategories;
+          }
+
+          return currentCategories;
+        });
+      } catch (error: any) {
+        if (isExpectedNetworkError(error)) {
+          return;
+        }
+
+        console.error("Auto category refresh failed:", error);
+      }
+    }
+
+    loadLatestCategories();
+
+    const interval = window.setInterval(loadLatestCategories, POLLING_MS);
+
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      window.clearInterval(interval);
+    };
+  }, [storeSlug]);
 
   const handleCategoryClick = (
     id: string,
@@ -72,6 +250,10 @@ export default function Categories() {
     }
   };
 
+  if (!categories.length) {
+    return null;
+  }
+
   return (
     <div className="top-[125px] z-30 w-full border-b border-zinc-200 bg-white/95 backdrop-blur-md dark:border-zinc-800 dark:bg-black/95 md:top-[82px]">
       <div className="mx-auto w-full max-w-[1600px]">
@@ -87,7 +269,7 @@ export default function Categories() {
             2xl:px-0
           "
         >
-          {CATEGORIES.map((cat) => {
+          {categories.map((cat) => {
             const isActive = active === cat.id;
 
             return (

@@ -2,7 +2,7 @@
 
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 export default function BaseMenuModal({
@@ -21,6 +21,10 @@ export default function BaseMenuModal({
   children: ReactNode;
 }) {
   const [mounted, setMounted] = useState(false);
+
+  const isProductModal = useMemo(() => {
+    return `${title} ${subtitle}`.toLowerCase().includes("product");
+  }, [title, subtitle]);
 
   useEffect(() => {
     setMounted(true);
@@ -75,7 +79,7 @@ export default function BaseMenuModal({
               onClick={onSave}
               className="rounded-full bg-green-800 px-5 py-3 text-sm font-black text-white transition hover:bg-green-900"
             >
-              {isEdit ? "Update" : "Save"}
+              {isProductModal ? "Next / Save" : isEdit ? "Update" : "Save"}
             </button>
           </div>
         </div>

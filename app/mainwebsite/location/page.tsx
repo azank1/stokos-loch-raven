@@ -1,7 +1,18 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import LocationStoreCards from "@/components/mainwebsite/mainlocationcard";
-// or your actual import path:
-// import LocationStoreCards from "@/components/LocationStoreCards";
+
+export const metadata: Metadata = {
+  title: "Choose Location | Stokos",
+  description: "Choose your nearest Stokos location to view the menu and place your order.",
+  alternates: {
+    canonical: "https://stokos-loch-raven.vercel.app/mainwebsite/location",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
 
 function LocationPageFallback() {
   return (

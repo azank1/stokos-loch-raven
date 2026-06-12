@@ -48,6 +48,10 @@ type ProductStoreConfig = {
   relatedUpsells?: Array<ProductRelatedUpsell | string>;
   upsell?: unknown;
   upsellName?: string;
+  isAvailable?: boolean;
+  available?: boolean;
+  isPopular?: boolean;
+  showInPopular?: boolean;
   status?: string;
   sortOrder?: number;
 };
@@ -108,6 +112,25 @@ function normalizeStoreValue(value: unknown) {
   return "";
 }
 
+function cleanBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+
+  if (typeof value === "string") {
+    const lower = value.toLowerCase().trim();
+
+    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
+      return true;
+    }
+
+    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 function getStoreVariants(store: StoreItem) {
   return [store.slug, store._id, store.id, store.name]
     .filter(Boolean)
@@ -150,6 +173,13 @@ function getStoreConfigs(product: Product): ProductStoreConfig[] {
     : [];
 }
 
+function isStoreConfigVisible(config: ProductStoreConfig) {
+  const available = config.isAvailable !== false && config.available !== false;
+  const status = String(config.status || "Active").trim();
+
+  return available && status !== "Inactive";
+}
+
 function getVisibleStoreConfigs(
   product: Product,
   stores: StoreItem[],
@@ -157,9 +187,11 @@ function getVisibleStoreConfigs(
 ): ProductStoreConfig[] {
   const configs = getStoreConfigs(product);
 
+  const activeConfigs = configs.filter(isStoreConfigVisible);
+
   const visibleConfigs =
     selectedStoreId && selectedStoreId !== "all"
-      ? configs.filter((config) => {
+      ? activeConfigs.filter((config) => {
           const configStoreId = String(config.storeId || "").trim();
 
           return (
@@ -167,7 +199,7 @@ function getVisibleStoreConfigs(
             isSameStore(configStoreId, selectedStoreId, stores)
           );
         })
-      : configs;
+      : activeConfigs;
 
   if (visibleConfigs.length) return visibleConfigs;
 
@@ -187,6 +219,10 @@ function getVisibleStoreConfigs(
       relatedUpsells: source.relatedUpsells,
       upsell: source.upsell,
       upsellName: source.upsellName,
+      isAvailable: true,
+      available: true,
+      isPopular: cleanBoolean(source.isPopular, cleanBoolean(source.showInPopular)),
+      showInPopular: cleanBoolean(source.isPopular, cleanBoolean(source.showInPopular)),
       status: source.status,
       sortOrder: source.sortOrder,
     },
@@ -522,6 +558,17 @@ function getLimitedStoreLabels(storeLabels: string[]) {
   };
 }
 
+function getPopularSummary(configs: ProductStoreConfig[]) {
+  const count = configs.filter((config) =>
+    cleanBoolean(config.isPopular, cleanBoolean(config.showInPopular))
+  ).length;
+
+  if (!count) return "Normal";
+  if (count === configs.length) return "Popular";
+
+  return `${count} popular`;
+}
+
 function getConfigWarnings(
   config: ProductStoreConfig,
   categoryName: string,
@@ -591,6 +638,7 @@ export default function ProductTable({
               <TableHead>Stores</TableHead>
               <TableHead>Price</TableHead>
               <TableHead>Modifiers</TableHead>
+              <TableHead>Popular</TableHead>
               <TableHead>Details</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Action</TableHead>
@@ -623,6 +671,7 @@ export default function ProductTable({
               const statusSummary = getProductStatusSummary(configs, product);
               const priceSummary = getPriceRangeLabel(configs);
               const modifierSummary = getModifierSummary(configs[0] || product);
+              const popularSummary = getPopularSummary(configs);
 
               return (
                 <Fragment key={productId}>
@@ -692,6 +741,18 @@ export default function ProductTable({
                     </td>
 
                     <td className="px-5 py-5 align-middle">
+                      {popularSummary === "Normal" ? (
+                        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-black text-zinc-500">
+                          Normal
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-pink-50 px-3 py-1.5 text-xs font-black text-pink-700">
+                          {popularSummary}
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="px-5 py-5 align-middle">
                       <button
                         type="button"
                         onClick={() =>
@@ -723,7 +784,7 @@ export default function ProductTable({
 
                   {isExpanded && (
                     <tr className="bg-zinc-50/70">
-                      <td colSpan={7} className="px-5 py-4">
+                      <td colSpan={8} className="px-5 py-4">
                         <div className="rounded-[22px] border border-zinc-200 bg-white shadow-sm">
                           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4">
                             <div>
@@ -770,6 +831,9 @@ export default function ProductTable({
                                   </th>
                                   <th className="px-5 py-3 text-xs font-black uppercase tracking-wide text-zinc-500">
                                     Issues
+                                  </th>
+                                  <th className="px-5 py-3 text-xs font-black uppercase tracking-wide text-zinc-500">
+                                    Popular
                                   </th>
                                   <th className="px-5 py-3 text-xs font-black uppercase tracking-wide text-zinc-500">
                                     Status
@@ -886,6 +950,18 @@ export default function ProductTable({
                                         ) : (
                                           <span className="rounded-full bg-green-50 px-3 py-1.5 text-xs font-black text-green-800">
                                             Looks good
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      <td className="px-5 py-4">
+                                        {cleanBoolean(config.isPopular, cleanBoolean(config.showInPopular)) ? (
+                                          <span className="rounded-full bg-pink-50 px-3 py-1.5 text-xs font-black text-pink-700">
+                                            Popular
+                                          </span>
+                                        ) : (
+                                          <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-black text-zinc-500">
+                                            Normal
                                           </span>
                                         )}
                                       </td>

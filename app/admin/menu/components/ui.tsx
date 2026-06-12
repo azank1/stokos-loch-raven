@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Edit3, Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 export function TableHead({ children }: { children: ReactNode }) {
   return (
@@ -64,12 +64,26 @@ export function FormInput({
   onChange,
   placeholder,
   type = "text",
+  inputMode,
+  pattern,
+  onKeyDown,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   type?: string;
+  inputMode?:
+    | "none"
+    | "text"
+    | "tel"
+    | "url"
+    | "email"
+    | "numeric"
+    | "decimal"
+    | "search";
+  pattern?: string;
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   return (
     <div>
@@ -81,7 +95,10 @@ export function FormInput({
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        onKeyDown={onKeyDown}
         placeholder={placeholder}
+        inputMode={inputMode}
+        pattern={pattern}
         className="h-12 w-full rounded-2xl border border-zinc-200 px-4 text-sm font-semibold outline-none transition placeholder:text-zinc-400 focus:border-green-700"
       />
     </div>

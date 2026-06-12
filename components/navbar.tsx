@@ -164,13 +164,12 @@ export default function Navbar() {
               <div className="hidden min-w-0 items-center gap-2 rounded-full border border-white/20 bg-white/15 px-4 py-2 2xl:flex">
                 <Search size={17} className="shrink-0" />
 
-              <input
-  suppressHydrationWarning
+        <input
   type="text"
   value={searchQuery}
   onChange={(e) => setSearchQuery(e.target.value)}
   placeholder="Search menu..."
-  className="w-[190px] bg-transparent text-sm text-white placeholder:text-white/70 outline-none"
+  className="w-full bg-transparent text-sm text-white placeholder:text-white/70 outline-none"
 />
               </div>
 

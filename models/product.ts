@@ -20,11 +20,20 @@ function cleanString(value: unknown) {
 
 function cleanRelatedUpsells(value: unknown) {
   const rawItems = Array.isArray(value) ? value : [];
-  const unique = new Map<string, { upsellId: string; name: string; price: number }>();
+
+  const unique = new Map<
+    string,
+    {
+      upsellId: string;
+      name: string;
+      price: number;
+    }
+  >();
 
   rawItems.forEach((item: any, index) => {
     if (typeof item === "string" || typeof item === "number") {
       const upsellId = cleanString(item);
+
       if (!upsellId) return;
 
       unique.set(upsellId, {
@@ -32,6 +41,7 @@ function cleanRelatedUpsells(value: unknown) {
         name: upsellId,
         price: 0,
       });
+
       return;
     }
 
@@ -40,6 +50,7 @@ function cleanRelatedUpsells(value: unknown) {
     const name = cleanString(
       item.name || item.offer || item.title || item.label || item.upsellName
     );
+
     const upsellId = cleanString(
       item.upsellId || item._id || item.id || item.slug || slugify(name)
     );
@@ -60,9 +71,23 @@ function cleanRelatedUpsells(value: unknown) {
 
 const ProductRelatedUpsellSchema = new Schema(
   {
-    upsellId: { type: String, required: true, trim: true },
-    name: { type: String, required: true, trim: true },
-    price: { type: Number, default: 0, min: 0 },
+    upsellId: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    price: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   { _id: false }
 );
@@ -70,19 +95,18 @@ const ProductRelatedUpsellSchema = new Schema(
 const ProductSchema = new Schema(
   {
     // Product Master = common/global data only.
-    // Store/category/price/size/modifier/status/sortOrder live in ProductStoreConfig.
+    // Store/category/price/size/modifier/status/sortOrder/isPopular live in ProductStoreConfig.
     name: {
       type: String,
       required: true,
       trim: true,
-      index: true,
     },
 
     slug: {
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
+      default: "",
     },
 
     description: {
@@ -112,26 +136,73 @@ const ProductSchema = new Schema(
 
     // Legacy fields are intentionally optional so old rows do not break during migration.
     // New writes should not depend on these fields.
-    storeId: { type: String, default: "", trim: true },
-    category: { type: String, default: "", trim: true },
-    categoryId: { type: String, default: "", trim: true },
-    categoryName: { type: String, default: "", trim: true },
-    price: { type: Number, default: 0 },
-    sizes: { type: Array, default: [] },
-    modifierGroups: { type: Array, default: [] },
-    modifierGroupIds: { type: [String], default: [] },
+    storeId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    category: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    categoryId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    categoryName: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    price: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    sizes: {
+      type: Array,
+      default: [],
+    },
+
+    modifierGroups: {
+      type: Array,
+      default: [],
+    },
+
+    modifierGroupIds: {
+      type: [String],
+      default: [],
+    },
 
     // New structure: [{ upsellId, name, price }].
     // Kept on product master only for legacy compatibility; store-wise value lives in ProductStoreConfig.
-    relatedUpsells: { type: [ProductRelatedUpsellSchema], default: [] },
-    upsell: { type: String, default: "" },
+    relatedUpsells: {
+      type: [ProductRelatedUpsellSchema],
+      default: [],
+    },
+
+    upsell: {
+      type: String,
+      default: "",
+    },
 
     status: {
       type: String,
       enum: ["Active", "Draft", "Hidden", "Inactive"],
       default: "Active",
     },
-    sortOrder: { type: Number, default: 0 },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: {
@@ -155,7 +226,7 @@ ProductSchema.pre("validate", function () {
   const doc = this as any;
 
   if (doc.name) {
-    doc.name = String(doc.name || "").trim();
+    doc.name = cleanString(doc.name);
   }
 
   if (!doc.slug && doc.name) {
@@ -173,8 +244,11 @@ ProductSchema.pre("validate", function () {
   doc.relatedUpsells = cleanRelatedUpsells(doc.relatedUpsells);
 });
 
+// Indexes only here. Do not also use index: true in fields above.
 ProductSchema.index({ slug: 1 });
 ProductSchema.index({ name: 1 });
+ProductSchema.index({ status: 1 });
+ProductSchema.index({ sortOrder: 1 });
 
 if (process.env.NODE_ENV === "development" && mongoose.models.Product) {
   delete mongoose.models.Product;

@@ -109,9 +109,8 @@ const ModifierGroupSchema = new Schema(
     },
 
     // Global options only.
-    // No store prices.
-    // No size prices.
-    // No product-specific prices.
+    // Store/category assignment is stored in modifiergroupassignments.
+    // Option prices are handled later inside ProductForm.
     options: {
       type: [ModifierOptionSchema],
       default: [],

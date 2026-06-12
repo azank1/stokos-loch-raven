@@ -17,11 +17,7 @@ function cleanStringArray(value: unknown) {
   if (!Array.isArray(value)) return [];
 
   return Array.from(
-    new Set(
-      value
-        .map((item) => cleanString(item))
-        .filter(Boolean)
-    )
+    new Set(value.map((item) => cleanString(item)).filter(Boolean))
   );
 }
 
@@ -43,14 +39,12 @@ const UpsellRuleSchema = new Schema(
       type: String,
       required: true,
       default: "towson",
-      index: true,
       trim: true,
     },
 
     storeIds: {
       type: [String],
       default: [],
-      index: true,
     },
 
     name: {
@@ -63,7 +57,7 @@ const UpsellRuleSchema = new Schema(
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
+      default: "",
     },
 
     image: {
@@ -91,16 +85,62 @@ const UpsellRuleSchema = new Schema(
 
     // Legacy fields kept optional so old product-based upsell records do not break.
     // New flow does not use product selection or one global trigger category.
-    categoryType: { type: String, default: "", trim: true },
-    categoryId: { type: String, default: "", trim: true },
-    categoryName: { type: String, default: "", trim: true },
-    triggerCategoryId: { type: String, default: "", trim: true },
-    triggerCategoryName: { type: String, default: "", trim: true },
-    offerProductIds: { type: [String], default: [] },
-    trigger: { type: String, default: "", trim: true },
-    offer: { type: String, default: "", trim: true },
-    appliesToCategories: { type: [String], default: [] },
-    appliesToProducts: { type: [String], default: [] },
+    categoryType: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    categoryId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    categoryName: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    triggerCategoryId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    triggerCategoryName: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    offerProductIds: {
+      type: [String],
+      default: [],
+    },
+
+    trigger: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    offer: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    appliesToCategories: {
+      type: [String],
+      default: [],
+    },
+
+    appliesToProducts: {
+      type: [String],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -116,6 +156,7 @@ UpsellRuleSchema.pre("validate", function () {
   doc.description = cleanString(doc.description);
   doc.status = cleanStatus(doc.status);
   doc.sortOrder = Number(doc.sortOrder || 0);
+
   doc.storeIds = cleanStringArray(doc.storeIds);
   doc.storeId = cleanString(doc.storeId || doc.storeIds[0] || "towson");
 
@@ -126,18 +167,32 @@ UpsellRuleSchema.pre("validate", function () {
   doc.slug = slugify(doc.slug || doc.name);
 
   // Keep legacy fields populated with harmless values for old code/old indexes.
-  doc.triggerCategoryId = cleanString(doc.triggerCategoryId || doc.categoryId || doc.slug);
-  doc.triggerCategoryName = cleanString(doc.triggerCategoryName || doc.categoryName || doc.categoryType);
+  doc.triggerCategoryId = cleanString(
+    doc.triggerCategoryId || doc.categoryId || doc.slug
+  );
+
+  doc.triggerCategoryName = cleanString(
+    doc.triggerCategoryName || doc.categoryName || doc.categoryType
+  );
+
   doc.offerProductIds = [];
   doc.trigger = doc.triggerCategoryName || doc.categoryType;
   doc.offer = doc.name;
-  doc.appliesToCategories = doc.triggerCategoryName ? [doc.triggerCategoryName] : [];
+  doc.appliesToCategories = doc.triggerCategoryName
+    ? [doc.triggerCategoryName]
+    : [];
   doc.appliesToProducts = [];
 });
 
+// Indexes only here. Do not use index: true inside fields above.
 UpsellRuleSchema.index({ slug: 1 }, { unique: true });
+UpsellRuleSchema.index({ storeId: 1 });
 UpsellRuleSchema.index({ storeIds: 1, status: 1, sortOrder: 1 });
 UpsellRuleSchema.index({ status: 1, sortOrder: 1 });
+
+if (process.env.NODE_ENV === "development" && mongoose.models.UpsellRule) {
+  delete mongoose.models.UpsellRule;
+}
 
 const UpsellRule =
   mongoose.models.UpsellRule ||

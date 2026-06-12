@@ -125,6 +125,9 @@ export type ProductStoreConfig = {
   relatedUpsells?: ProductRelatedUpsell[];
   upsell?: string;
 
+  // Store-wise popular flag. Product category same rahegi.
+  isPopular?: boolean;
+
   status: ProductStatus;
   sortOrder?: number;
 
@@ -160,6 +163,9 @@ export type Product = {
   relatedUpsells?: ProductRelatedUpsell[];
 
   storeConfigs?: ProductStoreConfig[];
+
+  // Compatibility field from selected/primary store config.
+  isPopular?: boolean;
 
   description?: string;
   sortOrder?: number;

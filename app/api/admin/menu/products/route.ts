@@ -11,6 +11,107 @@ import UpsellRule from "@/models/upsellrule";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+let adminProductIndexesPromise: Promise<void> | null = null;
+
+async function ensureAdminProductIndexes() {
+  if (!adminProductIndexesPromise) {
+    adminProductIndexesPromise = Promise.all([
+      Product.collection.createIndex({ slug: 1 }),
+      Product.collection.createIndex({ name: 1 }),
+      ProductStoreConfig.collection.createIndex({ productId: 1 }),
+      ProductStoreConfig.collection.createIndex({ storeId: 1, productId: 1 }),
+      ProductStoreConfig.collection.createIndex({ storeId: 1, categoryId: 1 }),
+      ProductStoreConfig.collection.createIndex({ storeId: 1, categoryName: 1 }),
+    ]).then(() => undefined);
+  }
+
+  return adminProductIndexesPromise;
+}
+
+const PRODUCT_LIST_PROJECTION = {
+  name: 1,
+  slug: 1,
+  description: 1,
+  image: 1,
+  tags: 1,
+  badge: 1,
+  price: 1,
+  category: 1,
+  categoryId: 1,
+  categoryName: 1,
+  storeId: 1,
+  isPopular: 1,
+  showInPopular: 1,
+  sortOrder: 1,
+  status: 1,
+  updatedAt: 1,
+  createdAt: 1,
+};
+
+const PRODUCT_DETAIL_PROJECTION = {
+  name: 1,
+  slug: 1,
+  description: 1,
+  image: 1,
+  tags: 1,
+  badge: 1,
+  price: 1,
+  sizes: 1,
+  modifierGroups: 1,
+  modifierGroupIds: 1,
+  relatedUpsells: 1,
+  upsell: 1,
+  category: 1,
+  categoryId: 1,
+  categoryName: 1,
+  storeId: 1,
+  isPopular: 1,
+  showInPopular: 1,
+  sortOrder: 1,
+  status: 1,
+  updatedAt: 1,
+  createdAt: 1,
+};
+
+const PRODUCT_CONFIG_LIGHT_PROJECTION = {
+  productId: 1,
+  storeId: 1,
+  categoryId: 1,
+  categoryName: 1,
+  categorySlug: 1,
+  price: 1,
+  isPopular: 1,
+  showInPopular: 1,
+  isAvailable: 1,
+  available: 1,
+  sortOrder: 1,
+  status: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+const PRODUCT_CONFIG_DETAIL_PROJECTION = {
+  productId: 1,
+  storeId: 1,
+  categoryId: 1,
+  categoryName: 1,
+  categorySlug: 1,
+  price: 1,
+  sizes: 1,
+  modifierGroups: 1,
+  modifierGroupIds: 1,
+  relatedUpsells: 1,
+  upsell: 1,
+  isPopular: 1,
+  showInPopular: 1,
+  isAvailable: 1,
+  available: 1,
+  sortOrder: 1,
+  status: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
 type ProductSizePayload = {
   id: string;
   name: string;
@@ -114,6 +215,25 @@ function categoryIdMatch(categoryId: string) {
 function cleanNumber(value: unknown) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function cleanBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+
+  if (typeof value === "string") {
+    const lower = value.toLowerCase().trim();
+
+    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
+      return true;
+    }
+
+    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
+      return false;
+    }
+  }
+
+  return fallback;
 }
 
 function cleanStatus(value: unknown): "Active" | "Inactive" {
@@ -735,6 +855,8 @@ function getRawStoreConfigs(body: any) {
       upsell: body.upsell,
       status: body.status,
       sortOrder: body.sortOrder,
+      isPopular: body.isPopular,
+      showInPopular: body.showInPopular,
       isAvailable: true,
     },
   ];
@@ -783,6 +905,11 @@ async function buildProductStoreConfigPayload(raw: any, productId: string) {
     relatedUpsells,
     upsell: raw.upsell || "",
 
+    isAvailable: raw.isAvailable !== false && raw.available !== false,
+    available: raw.isAvailable !== false && raw.available !== false,
+    isPopular: cleanBoolean(raw.isPopular, cleanBoolean(raw.showInPopular)),
+    showInPopular: cleanBoolean(raw.isPopular, cleanBoolean(raw.showInPopular)),
+
     sortOrder: Number(raw.sortOrder || 0),
     status: cleanProductStatus(raw.status),
   };
@@ -811,7 +938,7 @@ async function saveStoreConfigs(productId: string, body: any) {
     const storeId = normalizeStoreId(rawConfig?.storeId);
     if (!storeId) continue;
 
-    const isAvailable = rawConfig?.isAvailable !== false;
+    const isAvailable = rawConfig?.isAvailable !== false && rawConfig?.available !== false;
 
     if (!isAvailable) {
       await ProductStoreConfig.collection.deleteMany({
@@ -848,7 +975,11 @@ async function saveStoreConfigs(productId: string, body: any) {
 
   if (Array.isArray(body.storeConfigs)) {
     const intendedActiveConfigs = body.storeConfigs.filter((config: any) => {
-      return normalizeStoreId(config?.storeId) && config?.isAvailable !== false;
+      return (
+        normalizeStoreId(config?.storeId) &&
+        config?.isAvailable !== false &&
+        config?.available !== false
+      );
     });
 
     if (intendedActiveConfigs.length > 0 && savedConfigs.length === 0) {
@@ -881,6 +1012,10 @@ function formatConfig(config: any) {
     productId: clean.productId ? String(clean.productId) : clean.productId,
     storeId: clean.storeId ? normalizeStoreId(clean.storeId) : clean.storeId,
     categoryId: clean.categoryId ? String(clean.categoryId) : clean.categoryId,
+    isAvailable: clean.isAvailable !== false && clean.available !== false,
+    available: clean.isAvailable !== false && clean.available !== false,
+    isPopular: cleanBoolean(clean.isPopular, cleanBoolean(clean.showInPopular)),
+    showInPopular: cleanBoolean(clean.isPopular, cleanBoolean(clean.showInPopular)),
     relatedUpsells: formatRelatedUpsells(clean.relatedUpsells),
   };
 }
@@ -922,13 +1057,25 @@ function formatProductWithConfigs(
     relatedUpsells:
       primaryConfig?.relatedUpsells || formatRelatedUpsells(cleanProduct.relatedUpsells),
     upsell: primaryConfig?.upsell || cleanProduct.upsell || "",
+    isPopular: cleanBoolean(
+      primaryConfig?.isPopular,
+      cleanBoolean(cleanProduct.isPopular)
+    ),
+    showInPopular: cleanBoolean(
+      primaryConfig?.isPopular,
+      cleanBoolean(cleanProduct.showInPopular)
+    ),
     sortOrder: Number(primaryConfig?.sortOrder ?? cleanProduct.sortOrder ?? 0),
     status: primaryConfig?.status || cleanProduct.status || "Active",
     updatedAt: cleanProduct.updatedAt || "Today",
   };
 }
 
-async function getProductConfigs(productIds: string[], query: any = {}) {
+async function getProductConfigs(
+  productIds: string[],
+  query: any = {},
+  options: { detail?: boolean } = {}
+) {
   if (!productIds.length) return [];
 
   const productIdList = productIds.flatMap((productId) => productIdValues(productId));
@@ -942,7 +1089,11 @@ async function getProductConfigs(productIds: string[], query: any = {}) {
   }
 
   return ProductStoreConfig.collection
-    .find(rawQuery)
+    .find(rawQuery, {
+      projection: options.detail
+        ? PRODUCT_CONFIG_DETAIL_PROJECTION
+        : PRODUCT_CONFIG_LIGHT_PROJECTION,
+    })
     .sort({ storeId: 1, sortOrder: 1, createdAt: -1 })
     .toArray();
 }
@@ -973,14 +1124,16 @@ export async function GET(req: Request) {
   try {
     await connectDB();
 
-    // One-time safety cleanup for old duplicate master products.
-    // await cleanupDuplicateProductMastersBySlug();
-
     const { searchParams } = new URL(req.url);
 
     const storeId = cleanString(searchParams.get("storeId"));
     const category = cleanString(searchParams.get("category"));
     const search = cleanString(searchParams.get("search"));
+    const requestedId = cleanString(
+      searchParams.get("id") || searchParams.get("productId")
+    );
+
+    const wantsDetail = Boolean(requestedId);
 
     const configQuery: any = {};
 
@@ -996,14 +1149,56 @@ export async function GET(req: Request) {
       }
     }
 
+    if (requestedId) {
+      const productQuery = isValidObjectId(requestedId)
+        ? { _id: new mongoose.Types.ObjectId(requestedId) }
+        : {
+            $or: [
+              { id: requestedId },
+              { slug: requestedId },
+              { name: requestedId },
+            ],
+          };
+
+      const product = await Product.findOne(productQuery)
+        .select(PRODUCT_DETAIL_PROJECTION)
+        .lean();
+
+      if (!product) {
+        return NextResponse.json(
+          { success: false, message: "Product not found", data: null },
+          { status: 404 }
+        );
+      }
+
+      const configFilter = { ...configQuery };
+      const configs = await getProductConfigs(
+        [String(product._id)],
+        configFilter,
+        { detail: true }
+      );
+
+      const data = formatProductWithConfigs(
+        product,
+        configs,
+        storeId && storeId !== "all" ? storeId : null
+      );
+
+      return NextResponse.json({ success: true, data, product: data });
+    }
+
     const shouldFilterByConfig = Object.keys(configQuery).length > 0;
     let productIdsFromConfig: string[] | null = null;
     let filteredConfigs: any[] = [];
 
     if (shouldFilterByConfig) {
-      filteredConfigs = await ProductStoreConfig.collection.find(configQuery).toArray();
+      filteredConfigs = await ProductStoreConfig.collection
+        .find(configQuery, { projection: PRODUCT_CONFIG_LIGHT_PROJECTION })
+        .sort({ sortOrder: 1, createdAt: -1 })
+        .toArray();
+
       productIdsFromConfig = Array.from(
-        new Set(filteredConfigs.map((item) => String(item.productId)))
+        new Set(filteredConfigs.map((item) => String(item.productId)).filter(Boolean))
       );
 
       if (!productIdsFromConfig.length) {
@@ -1014,14 +1209,34 @@ export async function GET(req: Request) {
     const productQuery: any = {};
 
     if (productIdsFromConfig) {
-      productQuery._id = { $in: productIdsFromConfig };
+      const objectIds = productIdsFromConfig
+        .filter((id) => isValidObjectId(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+      productQuery.$or = [
+        ...(objectIds.length ? [{ _id: { $in: objectIds } }] : []),
+        { id: { $in: productIdsFromConfig } },
+        { slug: { $in: productIdsFromConfig } },
+      ];
     }
 
     if (search) {
-      productQuery.name = { $regex: search, $options: "i" };
+      const searchQuery = { $regex: search, $options: "i" };
+
+      productQuery.$and = [
+        ...(productQuery.$and || []),
+        {
+          $or: [
+            { name: searchQuery },
+            { slug: searchQuery },
+            { description: searchQuery },
+          ],
+        },
+      ];
     }
 
     const products = await Product.find(productQuery)
+      .select(wantsDetail ? PRODUCT_DETAIL_PROJECTION : PRODUCT_LIST_PROJECTION)
       .sort({ name: 1, createdAt: -1 })
       .lean();
 
@@ -1030,7 +1245,7 @@ export async function GET(req: Request) {
       ? filteredConfigs.filter((config) =>
           productIds.includes(String(config.productId))
         )
-      : await getProductConfigs(productIds);
+      : await getProductConfigs(productIds, {}, { detail: false });
 
     const configsByProduct = new Map<string, any[]>();
 
@@ -1092,7 +1307,7 @@ export async function POST(req: Request) {
 
     await saveStoreConfigs(String(product._id), body);
 
-    const configs = await getProductConfigs([String(product._id)]);
+    const configs = await getProductConfigs([String(product._id)], {}, { detail: true });
     const data = formatProductWithConfigs(product, configs, normalizeStoreId(body.storeId));
 
     return NextResponse.json({ success: true, data }, { status: 201 });
@@ -1159,7 +1374,7 @@ export async function PATCH(req: Request) {
 
     await saveStoreConfigs(String(product._id), body);
 
-    const configs = await getProductConfigs([String(product._id)]);
+    const configs = await getProductConfigs([String(product._id)], {}, { detail: true });
     const data = formatProductWithConfigs(product, configs, normalizeStoreId(body.storeId));
 
     return NextResponse.json({ success: true, data });

@@ -71,6 +71,7 @@ export default function MenuManagementClient() {
 
   const {
     isLoaded = true,
+    isProductsLoading = false,
 
     products: crudProductsRaw,
     categories: crudCategoriesRaw,
@@ -80,6 +81,7 @@ export default function MenuManagementClient() {
     addProduct,
     updateProduct,
     deleteProduct,
+    getProductDetail,
 
     addCategory,
     updateCategory,
@@ -119,6 +121,7 @@ export default function MenuManagementClient() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Categories");
   const [modal, setModal] = useState<ModalState>(null);
+  const [editingProductId, setEditingProductId] = useState("");
 
   const [pendingActions, setPendingActions] = useState(0);
   const pendingActionsRef = useRef(0);
@@ -324,6 +327,27 @@ export default function MenuManagementClient() {
       alert("Failed to delete item from database.");
     } finally {
       setPendingActions((count) => Math.max(0, count - 1));
+    }
+  };
+
+  const openProductEdit = async (product: Product) => {
+    const productId = getSafeId(product);
+
+    if (!productId) {
+      setModal({ type: "products", item: product });
+      return;
+    }
+
+    setEditingProductId(productId);
+
+    try {
+      const fullProduct = await getProductDetail(productId);
+      setModal({ type: "products", item: fullProduct || product });
+    } catch (error) {
+      console.error("Failed to load full product detail:", error);
+      setModal({ type: "products", item: product });
+    } finally {
+      setEditingProductId("");
     }
   };
 
@@ -651,16 +675,28 @@ export default function MenuManagementClient() {
           </div>
         )}
 
-        {activeTab === "products" && (
-    <ProductTable
-  products={filteredProducts}
-  categories={categories}
-  stores={stores}
-  upsellRules={upsellRules}
-  selectedStoreId={selectedStoreFilter}
-  onEdit={(product) => setModal({ type: "products", item: product })}
-  onDelete={(id) => handleDelete("products", id)} 
-  />
+        {activeTab === "products" && isProductsLoading && products.length === 0 && (
+          <div className="rounded-2xl border border-green-100 bg-green-50 px-4 py-3 text-sm font-bold text-green-800">
+            Loading products in background...
+          </div>
+        )}
+
+        {activeTab === "products" && editingProductId && (
+          <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-800">
+            Loading product details...
+          </div>
+        )}
+
+        {activeTab === "products" && !(isProductsLoading && products.length === 0) && (
+          <ProductTable
+            products={filteredProducts}
+            categories={categories}
+            stores={stores}
+            upsellRules={upsellRules}
+            selectedStoreId={selectedStoreFilter}
+            onEdit={(product) => openProductEdit(product)}
+            onDelete={(id) => handleDelete("products", id)}
+          />
         )}
 
         {activeTab === "categories" && (
@@ -796,7 +832,7 @@ function getItemStoreId(item: unknown) {
 
   const activeConfigStoreId = storeConfigs
     .filter((config: any) => {
-      const available = config.available !== false;
+      const available = config.isAvailable !== false && config.available !== false;
       const active = config.status !== "Inactive";
       return available && active;
     })
@@ -928,7 +964,7 @@ function getStoreConfigs(item: unknown) {
   const obj = item as { storeConfigs?: unknown };
 
   return Array.isArray(obj.storeConfigs)
-    ? (obj.storeConfigs as Array<{ storeId?: unknown; status?: string; available?: boolean }>)
+    ? (obj.storeConfigs as Array<{ storeId?: unknown; status?: string; isAvailable?: boolean; available?: boolean }>)
     : [];
 }
 
@@ -941,7 +977,7 @@ function filterItemsByStore<T>(items: T[], selectedStoreFilter: string) {
     if (storeConfigs.length > 0) {
       return storeConfigs.some((config) => {
         const storeId = normalizeStoreValue(config.storeId);
-        const available = config.available !== false;
+        const available = config.isAvailable !== false && config.available !== false;
         const active = config.status !== "Inactive";
         return storeId === selectedStoreFilter && available && active;
       });

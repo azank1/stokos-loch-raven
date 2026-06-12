@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+
+# Block filter/query URLs
+Disallow: /*?action=menu
+Disallow: /*&action=menu
+Disallow: /*?category=
+Disallow: /*&category=
+Disallow: /*?deal=
+Disallow: /*&deal=
+
+Sitemap: https://stokos-loch-raven.vercel.app/sitemap.xml

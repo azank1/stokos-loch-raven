@@ -77,6 +77,25 @@ function safeArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+function cleanBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+
+  if (typeof value === "string") {
+    const lower = value.toLowerCase().trim();
+
+    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
+      return true;
+    }
+
+    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 function getArrayFromResponse<T>(json: any, type: MenuEntity): T[] {
   const keys = ["items", ...RESPONSE_KEYS[type]];
 
@@ -158,14 +177,31 @@ function getApiUrl(type: MenuEntity) {
   return `/api/admin/menu/${API_ROUTES[type]}`;
 }
 
-async function apiGet<T>(type: MenuEntity): Promise<T[]> {
+type ApiGetOptions = {
+  storeId?: string;
+  category?: string;
+  search?: string;
+  signal?: AbortSignal;
+};
+
+async function apiGet<T>(
+  type: MenuEntity,
+  options: ApiGetOptions = {}
+): Promise<T[]> {
   try {
-    const res = await fetch(`${getApiUrl(type)}?t=${Date.now()}`, {
+    const params = new URLSearchParams();
+
+    if (options.storeId) params.set("storeId", options.storeId);
+    if (options.category) params.set("category", options.category);
+    if (options.search) params.set("search", options.search);
+
+    const query = params.toString();
+    const url = query ? `${getApiUrl(type)}?${query}` : getApiUrl(type);
+
+    const res = await fetch(url, {
       method: "GET",
       cache: "no-store",
-      headers: {
-        "Cache-Control": "no-cache",
-      },
+      signal: options.signal,
     });
 
     const json = await res.json().catch(() => null);
@@ -176,9 +212,48 @@ async function apiGet<T>(type: MenuEntity): Promise<T[]> {
     }
 
     return getArrayFromResponse<T>(json, type);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === "AbortError") return [];
     console.error(`Failed to load ${type}`, error);
     return [];
+  }
+}
+
+
+async function apiGetOne<T extends object>(
+  type: MenuEntity,
+  id: string,
+  options: ApiGetOptions = {}
+): Promise<T | null> {
+  const cleanId = String(id || "").trim();
+  if (!cleanId) return null;
+
+  try {
+    const params = new URLSearchParams();
+    params.set("id", cleanId);
+    params.set("detail", "1");
+
+    if (options.storeId) params.set("storeId", options.storeId);
+    if (options.category) params.set("category", options.category);
+
+    const res = await fetch(`${getApiUrl(type)}?${params.toString()}`, {
+      method: "GET",
+      cache: "no-store",
+      signal: options.signal,
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok || json?.success === false) {
+      console.error(`Failed to load ${type} detail`, json);
+      return null;
+    }
+
+    return getItemFromResponse<T>(json, type, {} as T);
+  } catch (error: any) {
+    if (error?.name === "AbortError") return null;
+    console.error(`Failed to load ${type} detail`, error);
+    return null;
   }
 }
 
@@ -632,6 +707,20 @@ function normalizeProductModifierGroups(
     .filter(Boolean) as ProductModifierGroup[];
 }
 
+function isStoreConfigVisible(config: any) {
+  if (!config || typeof config !== "object") return false;
+
+  const available =
+    config.isAvailable !== false &&
+    config.available !== false &&
+    config.enabled !== false;
+
+  const status = String(config.status || "Active").trim();
+  const active = status !== "Inactive";
+
+  return available && active;
+}
+
 function normalizeStoreConfig(config: unknown, fallbackProduct?: Product) {
   if (!config || typeof config !== "object") return null;
 
@@ -661,6 +750,10 @@ function normalizeStoreConfig(config: unknown, fallbackProduct?: Product) {
     ),
     relatedUpsells: normalizeRelatedUpsells(obj.relatedUpsells),
     upsell: String(obj.upsell || ""),
+    isAvailable: obj.isAvailable !== false && obj.available !== false,
+    available: obj.isAvailable !== false && obj.available !== false,
+    isPopular: cleanBoolean(obj.isPopular, cleanBoolean(obj.showInPopular)),
+    showInPopular: cleanBoolean(obj.isPopular, cleanBoolean(obj.showInPopular)),
     status: obj.status || "Active",
     sortOrder: Number(obj.sortOrder || 0),
   };
@@ -671,7 +764,7 @@ function getPrimaryStoreConfig(product: Product) {
     .map((config) => normalizeStoreConfig(config, product))
     .filter(Boolean) as any[];
 
-  return configs[0] || null;
+  return configs.filter(isStoreConfigVisible)[0] || null;
 }
 
 function normalizeProduct(product: Product): Product {
@@ -684,7 +777,8 @@ function normalizeProduct(product: Product): Product {
 
   const storeConfigs = safeArray<unknown>(productObj.storeConfigs)
     .map((config) => normalizeStoreConfig(config, product))
-    .filter(Boolean) as any[];
+    .filter(Boolean)
+    .filter(isStoreConfigVisible) as any[];
 
   const primaryConfig = storeConfigs[0] || getPrimaryStoreConfig(product);
 
@@ -721,6 +815,14 @@ function normalizeProduct(product: Product): Product {
     modifierGroupIds,
     relatedUpsells: normalizeRelatedUpsells(sourceForStoreFields.relatedUpsells),
     upsell: String(sourceForStoreFields.upsell || ""),
+    isPopular: cleanBoolean(
+      primaryConfig?.isPopular,
+      cleanBoolean(primaryConfig?.showInPopular, cleanBoolean((product as any).isPopular))
+    ),
+    showInPopular: cleanBoolean(
+      primaryConfig?.isPopular,
+      cleanBoolean(primaryConfig?.showInPopular, cleanBoolean((product as any).showInPopular))
+    ),
     status: primaryConfig?.status || product.status || "Active",
     sortOrder: Number(primaryConfig?.sortOrder || product.sortOrder || 0),
     updatedAt: product.updatedAt || "Today",
@@ -1209,36 +1311,107 @@ export function useMenuCrud() {
   const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
   const [upsellRules, setUpsellRules] = useState<UpsellRule[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isProductsLoading, setIsProductsLoading] = useState(false);
+  const [isMetaLoading, setIsMetaLoading] = useState(false);
 
   const firstLoadDone = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadMenu = useCallback(async () => {
+    abortControllerRef.current?.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     if (!firstLoadDone.current) {
       setIsLoaded(false);
     }
 
-    const [productsData, categoriesData, modifiersData, upsellsData] =
-      await Promise.all([
-        apiGet<Product>("products"),
-        apiGet<Category>("categories"),
-        apiGet<ModifierGroup>("modifier-groups"),
-        apiGet<UpsellRule>("upsells"),
-      ]);
+    setIsMetaLoading(true);
+    setIsProductsLoading(true);
 
-    setProducts(productsData.map(normalizeProduct));
-    setCategories(
-      sortBySortOrder(categoriesData.map(normalizeCategory) as Category[])
-    );
-    setModifierGroups(modifiersData.map(normalizeModifier));
-    setUpsellRules(upsellsData.map(normalizeUpsell));
+    const finishFirstPaint = () => {
+      if (!firstLoadDone.current) {
+        firstLoadDone.current = true;
+        setIsLoaded(true);
+      }
+    };
 
-    firstLoadDone.current = true;
-    setIsLoaded(true);
+    // Load products independently. Product table should not wait for
+    // categories/modifier-groups/upsells, because those can be heavier.
+    apiGet<Product>("products", { signal: controller.signal })
+      .then((productsData) => {
+        if (controller.signal.aborted) return;
+
+        setProducts(productsData.map(normalizeProduct));
+        finishFirstPaint();
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+
+        console.error("Failed to load products", error);
+        finishFirstPaint();
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return;
+        setIsProductsLoading(false);
+      });
+
+    // Load secondary data separately. Product rows can render first; filters,
+    // modifier forms, and upsell data will hydrate immediately after.
+    Promise.all([
+      apiGet<Category>("categories", { signal: controller.signal }),
+      apiGet<ModifierGroup>("modifier-groups", { signal: controller.signal }),
+      apiGet<UpsellRule>("upsells", { signal: controller.signal }),
+    ])
+      .then(([categoriesData, modifiersData, upsellsData]) => {
+        if (controller.signal.aborted) return;
+
+        setCategories(
+          sortBySortOrder(categoriesData.map(normalizeCategory) as Category[])
+        );
+        setModifierGroups(modifiersData.map(normalizeModifier));
+        setUpsellRules(upsellsData.map(normalizeUpsell));
+        finishFirstPaint();
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+
+        console.error("Failed to load menu meta data", error);
+        finishFirstPaint();
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return;
+        setIsMetaLoading(false);
+      });
   }, []);
 
   useEffect(() => {
     loadMenu();
+
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, [loadMenu]);
+
+  const getProductDetail = useCallback(async (productId: string) => {
+    const detail = await apiGetOne<Product>("products", productId);
+
+    if (!detail) return null;
+
+    const normalized = normalizeProduct(detail);
+    const normalizedId = getMongoId(normalized);
+
+    setProducts((prev) => {
+      const exists = prev.some((item) => getMongoId(item) === normalizedId);
+
+      if (!exists) return [normalized, ...prev];
+
+      return updateLocalItem(prev, normalized);
+    });
+
+    return normalized;
+  }, []);
 
   const addProduct = async (product: Product) => {
     const tempId = `temp-product-${Date.now()}`;
@@ -1266,8 +1439,12 @@ export function useMenuCrud() {
     const productId = getMongoId(payload);
     const oldProducts = products;
 
+    const optimisticProduct = normalizeProduct(payload);
+
     setProducts((prev) =>
-      prev.map((item) => (getMongoId(item) === productId ? payload : item))
+      prev.map((item) =>
+        getMongoId(item) === productId ? optimisticProduct : item
+      )
     );
 
     try {
@@ -1573,6 +1750,8 @@ export function useMenuCrud() {
 
   return {
     isLoaded,
+    isProductsLoading,
+    isMetaLoading,
 
     products,
     categories,
@@ -1582,6 +1761,7 @@ export function useMenuCrud() {
     addProduct,
     updateProduct,
     deleteProduct,
+    getProductDetail,
 
     addCategory,
     updateCategory,

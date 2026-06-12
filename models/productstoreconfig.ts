@@ -18,6 +18,25 @@ function cleanString(value: unknown) {
   return String(value || "").trim();
 }
 
+function cleanBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+
+  if (typeof value === "string") {
+    const lower = value.toLowerCase().trim();
+
+    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
+      return true;
+    }
+
+    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 function normalizeStoreId(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
@@ -169,7 +188,6 @@ const ProductStoreConfigSchema = new Schema(
       default: [],
     },
 
-    // Store-wise upsells with editable admin price.
     relatedUpsells: {
       type: [ProductRelatedUpsellSchema],
       default: [],
@@ -178,6 +196,32 @@ const ProductStoreConfigSchema = new Schema(
       type: String,
       default: "",
     },
+
+    // Store-wise availability. The products API mostly deletes disabled configs,
+    // but keeping the flag prevents old/alternate routes from losing state.
+    isAvailable: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    available: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
+    // Store-wise Popular Menu Items toggle.
+    isPopular: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    showInPopular: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     status: {
       type: String,
       enum: ["Active", "Draft", "Hidden", "Inactive"],
@@ -205,6 +249,14 @@ ProductStoreConfigSchema.pre("validate", function () {
   doc.storeId = normalizeStoreId(doc.storeId);
   doc.categoryId = String(doc.categoryId || "").trim();
   doc.relatedUpsells = cleanRelatedUpsells(doc.relatedUpsells);
+
+  const available = cleanBoolean(doc.isAvailable, cleanBoolean(doc.available, true));
+  doc.isAvailable = available;
+  doc.available = available;
+
+  const popular = cleanBoolean(doc.isPopular, cleanBoolean(doc.showInPopular));
+  doc.isPopular = popular;
+  doc.showInPopular = popular;
 
   if (!Array.isArray(doc.sizes) || doc.sizes.length === 0) {
     doc.sizes = [
@@ -253,6 +305,8 @@ ProductStoreConfigSchema.index(
 ProductStoreConfigSchema.index({ storeId: 1, categoryId: 1, status: 1 });
 ProductStoreConfigSchema.index({ storeId: 1, sortOrder: 1 });
 ProductStoreConfigSchema.index({ storeId: 1, "relatedUpsells.upsellId": 1 });
+ProductStoreConfigSchema.index({ storeId: 1, isPopular: 1, status: 1 });
+ProductStoreConfigSchema.index({ storeId: 1, isAvailable: 1, status: 1 });
 
 if (
   process.env.NODE_ENV === "development" &&

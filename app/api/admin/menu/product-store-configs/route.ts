@@ -33,6 +33,25 @@ function cleanNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function cleanBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+
+  if (typeof value === "string") {
+    const lower = value.toLowerCase().trim();
+
+    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
+      return true;
+    }
+
+    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 function productIdValues(productId: string) {
   const cleanProductId = cleanString(productId);
   const values: any[] = [];
@@ -340,6 +359,10 @@ async function buildPayload(body: any) {
     ),
     relatedUpsells: await resolveRelatedUpsells(body.relatedUpsells),
     upsell: body.upsell || "",
+    isAvailable: body.isAvailable !== false && body.available !== false,
+    available: body.isAvailable !== false && body.available !== false,
+    isPopular: cleanBoolean(body.isPopular, cleanBoolean(body.showInPopular)),
+    showInPopular: cleanBoolean(body.isPopular, cleanBoolean(body.showInPopular)),
     status: cleanProductStatus(body.status),
     sortOrder: Number(body.sortOrder || 0),
   };

@@ -23,13 +23,15 @@ export default function MenuSection({
 
   const filteredProducts = normalizedSearch
     ? products.filter((product) =>
-        product.title.toLowerCase().includes(normalizedSearch)
+        String(product?.title || product?.name || "")
+          .toLowerCase()
+          .includes(normalizedSearch)
       )
     : products;
 
   const visibleProducts = filteredProducts.slice(0, 10);
 
-  if (normalizedSearch && visibleProducts.length === 0) {
+  if (visibleProducts.length === 0) {
     return null;
   }
 
@@ -49,7 +51,6 @@ export default function MenuSection({
         md:pt-8 md:pb-10
       "
     >
-      {/* Header */}
       <div className="mb-5 flex items-center justify-between gap-4 md:mb-6">
         <div className="flex min-w-0 flex-wrap items-baseline gap-2 md:gap-3">
           <h2
@@ -105,29 +106,24 @@ export default function MenuSection({
         )}
       </div>
 
-      {/* Grid */}
       <div
         className="
           grid w-full
           grid-cols-2
           gap-3
-
           md:grid-cols-3
           md:gap-4
-
           lg:grid-cols-3
           lg:gap-5
-
           xl:grid-cols-4
           xl:gap-5
-
           2xl:grid-cols-5
           2xl:gap-6
         "
       >
         {visibleProducts.map((product, index) => (
           <div
-            key={product.id}
+            key={product.id || product._id || `${product.title}-${index}`}
             className={`
               min-w-0 h-full
               ${!normalizedSearch && index >= 4 ? "hidden md:block" : "block"}

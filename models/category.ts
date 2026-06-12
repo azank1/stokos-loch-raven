@@ -9,6 +9,10 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
+
 const CategorySchema = new Schema(
   {
     // Category Master = common/global category data only.
@@ -17,29 +21,39 @@ const CategorySchema = new Schema(
       type: String,
       required: true,
       trim: true,
-      index: true,
     },
 
     slug: {
       type: String,
       trim: true,
       lowercase: true,
-      index: true,
+      default: "",
     },
 
     description: {
       type: String,
       default: "",
+      trim: true,
     },
 
     image: {
       type: String,
       default: "",
+      trim: true,
     },
 
     // Legacy optional fields so old category routes/data do not crash during migration.
-    storeId: { type: String, default: "", trim: true },
-    sortOrder: { type: Number, default: 0 },
+    storeId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
+
     status: {
       type: String,
       enum: ["Active", "Hidden", "Inactive"],
@@ -64,13 +78,26 @@ CategorySchema.virtual("storeConfigs", {
 CategorySchema.pre("validate", function () {
   const doc = this as any;
 
+  doc.name = cleanString(doc.name);
+  doc.description = cleanString(doc.description);
+  doc.image = cleanString(doc.image);
+  doc.storeId = cleanString(doc.storeId);
+  doc.sortOrder = Number(doc.sortOrder || 0);
+
   if (!doc.slug && doc.name) {
     doc.slug = slugify(doc.name);
   }
+
+  if (doc.slug) {
+    doc.slug = slugify(doc.slug);
+  }
 });
 
+// Indexes only here. Do not use index: true inside fields above.
 CategorySchema.index({ slug: 1 });
 CategorySchema.index({ name: 1 });
+CategorySchema.index({ status: 1 });
+CategorySchema.index({ sortOrder: 1 });
 
 if (process.env.NODE_ENV === "development" && mongoose.models.Category) {
   delete mongoose.models.Category;

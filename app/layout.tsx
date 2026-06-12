@@ -22,8 +22,11 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
+        suppressHydrationWarning
         className={`${jakarta.variable} min-h-screen bg-white font-sans antialiased dark:bg-black`}
       >
+        <main className="min-h-screen">{children}</main>
+
         <Script
           id="stripe-back-fix"
           strategy="afterInteractive"
@@ -40,8 +43,6 @@ export default function RootLayout({
             `,
           }}
         />
-
-        <main className="min-h-screen">{children}</main>
       </body>
     </html>
   );

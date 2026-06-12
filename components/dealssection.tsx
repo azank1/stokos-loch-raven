@@ -2,70 +2,261 @@
 
 import Image from "next/image";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import DealProductModal from "./dealsproductmodel";
 
 type StoreSlug = "towson" | "york" | "liberty";
 
+type MenuCategoryTab = {
+  id: string;
+  name: string;
+  slug?: string;
+  description?: string;
+  image?: string;
+  sortOrder?: number;
+};
+
 type DealProduct = {
   id: string;
+  _id?: string;
   deal: string;
+  slug?: string;
   category: "deals";
   title: string;
+  name: string;
   description: string;
   price: string;
   image: string;
   storeSlug?: StoreSlug;
+  storeConfig?: any;
+  sizes?: any[];
+  modifierGroups?: any[];
+  relatedUpsells?: any[];
+  [key: string]: any;
+};
+
+type DealsSectionProps = {
+  storeSlug?: StoreSlug | string;
+  categories?: MenuCategoryTab[];
+  initialProducts?: any[];
 };
 
 const validStores: StoreSlug[] = ["towson", "york", "liberty"];
 
-const deals: DealProduct[] = [
-  {
-    id: "half-sub-fries-soda-special",
-    deal: "half-sub-fries-soda-special",
-    category: "deals",
-    title: "Half Sub Combo",
-    description:
-      "Any 1/2 sub with French fries and a can of soda. Seafood subs extra.",
-    price: "$12.99",
-    image: "/images/halfsubcombo.jpeg",
-  },
-  {
-    id: "two-large-one-topping-pizzas",
-    deal: "two-large-one-topping-pizzas",
-    category: "deals",
-    title: "2 Large 1-Topping Pizzas",
-    description: "Two large pizzas with one topping each.",
-    price: "$18.99",
-    image: "/images/largepizza.png",
-  },
-  {
-    id: "xl-pizza-one-topping-20-wings",
-    deal: "xl-pizza-one-topping-20-wings",
-    category: "deals",
-    title: "XL Pizza & 20 Wings",
-    description: "X-large 1-topping pizza with 20 Buffalo wings.",
-    price: "$29.99",
-    image: "/images/pizzaandwings.png",
-  },
-];
+const MENU_COUPON_CATEGORY_KEYS = new Set([
+  "menu-coupons",
+  "menu-coupon",
+  "menu-coupon-category",
+  "coupons",
+  "coupon",
+  "deals",
+  "deal",
+  "menu-deals",
+  "menu-deal",
+]);
 
-export default function DealsSection() {
+function slugify(value: unknown) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeStoreId(value: unknown) {
+  return cleanString(value).toLowerCase();
+}
+
+function getMatchingStoreConfig(product: any, storeSlug: string) {
+  const cleanStoreSlug = normalizeStoreId(storeSlug);
+  const configs = Array.isArray(product?.storeConfigs) ? product.storeConfigs : [];
+
+  if (!configs.length) return product?.storeConfig || null;
+
+  const matched = configs.find((config: any) => {
+    const configStoreId = normalizeStoreId(
+      config?.storeId || config?.storeSlug || config?.store
+    );
+
+    return configStoreId === cleanStoreSlug;
+  });
+
+  return matched || product?.storeConfig || configs[0] || null;
+}
+
+function isMenuCouponCategory(category: Partial<MenuCategoryTab>) {
+  const keys = [category.id, category.slug, category.name]
+    .filter(Boolean)
+    .map((value) => slugify(value));
+
+  return keys.some((key) => MENU_COUPON_CATEGORY_KEYS.has(key));
+}
+
+function getMenuCouponCategoryKeys(categories: MenuCategoryTab[]) {
+  const keys = new Set<string>(MENU_COUPON_CATEGORY_KEYS);
+
+  (categories || []).forEach((category) => {
+    if (!isMenuCouponCategory(category)) return;
+
+    [category.id, category.slug, category.name].forEach((value) => {
+      const key = slugify(value);
+      if (key) keys.add(key);
+    });
+  });
+
+  return keys;
+}
+
+function getProductCategoryKeys(product: any) {
+  const storeConfig = product?.storeConfig || null;
+
+  return [
+    product?.categoryId,
+    product?.categoryID,
+    product?.category_id,
+    product?.category,
+    product?.categorySlug,
+    product?.categoryName,
+    product?.categoryTitle,
+
+    storeConfig?.categoryId,
+    storeConfig?.categorySlug,
+    storeConfig?.categoryName,
+
+    product?.category?.id,
+    product?.category?._id,
+    product?.category?.slug,
+    product?.category?.name,
+  ]
+    .filter(Boolean)
+    .map((value) => slugify(value));
+}
+
+function isMenuCouponProduct(product: any, categories: MenuCategoryTab[]) {
+  const couponCategoryKeys = getMenuCouponCategoryKeys(categories);
+  const productCategoryKeys = getProductCategoryKeys(product);
+
+  return productCategoryKeys.some((key) => couponCategoryKeys.has(key));
+}
+
+function getFirstSizePrice(product: any, storeConfig: any) {
+  const sizes = Array.isArray(storeConfig?.sizes)
+    ? storeConfig.sizes
+    : Array.isArray(product?.sizes)
+    ? product.sizes
+    : [];
+
+  const firstSizeWithPrice = sizes.find((size: any) => {
+    const value = Number(size?.price ?? size?.upcharge ?? size?.amount);
+    return Number.isFinite(value) && value > 0;
+  });
+
+  return firstSizeWithPrice?.price ?? firstSizeWithPrice?.upcharge ?? firstSizeWithPrice?.amount;
+}
+
+function formatPrice(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? `$${value.toFixed(2)}` : "$0.00";
+  }
+
+  const raw = cleanString(value);
+  if (!raw) return "$0.00";
+
+  if (raw.includes("$")) return raw;
+
+  const number = Number(raw.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(number) ? `$${number.toFixed(2)}` : raw;
+}
+
+function getDealImage(product: any, storeConfig: any) {
+  return (
+    cleanString(storeConfig?.image) ||
+    cleanString(storeConfig?.imageUrl) ||
+    cleanString(product?.image) ||
+    cleanString(product?.imageUrl) ||
+    cleanString(product?.thumbnail) ||
+    cleanString(product?.photo) ||
+    "/images/placeholder-food.png"
+  );
+}
+
+function normalizeDealProduct(product: any, storeSlug: StoreSlug): DealProduct {
+  const storeConfig = getMatchingStoreConfig(product, storeSlug);
+
+  const id = cleanString(product?.id || product?._id || product?.slug);
+  const title = cleanString(product?.title || product?.name || "Menu Coupon");
+  const slug = cleanString(product?.slug) || slugify(title || id);
+  const priceValue =
+    storeConfig?.price ??
+    product?.price ??
+    product?.basePrice ??
+    getFirstSizePrice(product, storeConfig) ??
+    0;
+
+  return {
+    ...product,
+    storeConfig,
+    id: id || slug,
+    _id: product?._id,
+    deal: cleanString(product?.deal || slug || id),
+    slug,
+    category: "deals",
+    title,
+    name: title,
+    description: cleanString(product?.description),
+    price: formatPrice(priceValue),
+    image: getDealImage(product, storeConfig),
+    storeSlug,
+    sizes: Array.isArray(storeConfig?.sizes) ? storeConfig.sizes : product?.sizes || [],
+    relatedUpsells: Array.isArray(storeConfig?.relatedUpsells)
+      ? storeConfig.relatedUpsells
+      : product?.relatedUpsells || [],
+    modifierGroups:
+      Array.isArray(storeConfig?.modifierGroups) && storeConfig.modifierGroups.length > 0
+        ? storeConfig.modifierGroups
+        : Array.isArray(product?.modifierGroups) && product.modifierGroups.length > 0
+        ? product.modifierGroups
+        : Array.isArray(product?.attachedModifierGroups)
+        ? product.attachedModifierGroups
+        : [],
+  };
+}
+
+export default function DealsSection({
+  storeSlug: storeSlugProp,
+  categories = [],
+  initialProducts = [],
+}: DealsSectionProps) {
   const sliderRef = useRef<HTMLDivElement>(null);
-  const params = useParams();
   const searchParams = useSearchParams();
 
   const [selectedDeal, setSelectedDeal] = useState<DealProduct | null>(null);
   const [isDealModalOpen, setIsDealModalOpen] = useState(false);
 
-  const slugParam = params?.slug;
-  const currentSlug = Array.isArray(slugParam) ? slugParam[0] : slugParam;
+  const currentSlug = cleanString(storeSlugProp);
 
   const storeSlug: StoreSlug = validStores.includes(currentSlug as StoreSlug)
     ? (currentSlug as StoreSlug)
     : "towson";
+
+  const deals = useMemo(() => {
+    return (initialProducts || [])
+      .map((product) => {
+        const storeConfig = getMatchingStoreConfig(product, storeSlug);
+        return {
+          ...product,
+          storeConfig,
+        };
+      })
+      .filter((product) => isMenuCouponProduct(product, categories))
+      .map((product) => normalizeDealProduct(product, storeSlug));
+  }, [initialProducts, categories, storeSlug]);
 
   const selectedDealSlug = searchParams.get("deal");
 
@@ -84,19 +275,23 @@ export default function DealsSection() {
 
   useEffect(() => {
     if (!selectedDealSlug) return;
+    if (!deals.length) return;
 
-    const matchedDeal = deals.find(
-      (item) => item.deal === selectedDealSlug || item.id === selectedDealSlug
-    );
+    const cleanDealSlug = slugify(selectedDealSlug);
+
+    const matchedDeal = deals.find((item) => {
+      return [item.deal, item.id, item._id, item.slug, item.title]
+        .filter(Boolean)
+        .some((value) => slugify(value) === cleanDealSlug);
+    });
 
     if (!matchedDeal) return;
 
-    const timer = window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
       const dealsSection = document.getElementById("deals");
 
       if (dealsSection) {
-        const top =
-          dealsSection.getBoundingClientRect().top + window.scrollY - 120;
+        const top = dealsSection.getBoundingClientRect().top + window.scrollY - 120;
 
         window.scrollTo({
           top,
@@ -105,10 +300,8 @@ export default function DealsSection() {
       }
 
       openDealModal(matchedDeal);
-    }, 700);
-
-    return () => window.clearTimeout(timer);
-  }, [selectedDealSlug, storeSlug]);
+    });
+  }, [selectedDealSlug, storeSlug, deals]);
 
   const scroll = (direction: "left" | "right") => {
     if (!sliderRef.current) return;
@@ -120,6 +313,8 @@ export default function DealsSection() {
       behavior: "smooth",
     });
   };
+
+  if (!deals.length) return null;
 
   return (
     <>
@@ -241,7 +436,7 @@ export default function DealsSection() {
                   </h3>
 
                   <p className="mt-3 min-h-[52px] text-[14px] font-medium leading-[1.55] text-neutral-700 transition-colors duration-300 dark:text-neutral-300">
-                    {deal.description}
+                    {deal.description || "Special menu coupon deal."}
                   </p>
 
                   <div className="mt-6 flex items-center justify-between gap-4">
