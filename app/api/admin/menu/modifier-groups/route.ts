@@ -7,6 +7,7 @@ import ModifierGroupAssignment, {
   ALL_CATEGORIES_ID,
   ALL_CATEGORIES_NAME,
 } from "@/models/modifiergroupassignment";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -298,6 +299,8 @@ const data = allGroups.find(
   (item) => getRecordId(item) === modifierGroupId
 );
 
+    await rebuildStoreMenusAfterAdminChange(body, data, payload.assignments);
+
     return NextResponse.json({
       success: true,
       data,
@@ -383,6 +386,8 @@ const data = allGroups.find(
   (item) => getRecordId(item) === modifierGroupId
 );
 
+    await rebuildStoreMenusAfterAdminChange(body, data, payload.assignments);
+
     return NextResponse.json({
       success: true,
       data,
@@ -435,6 +440,8 @@ export async function DELETE(request: Request) {
     if (group?._id) {
       await ModifierGroupAssignment.deleteMany({ modifierGroupId: String(group._id) });
     }
+
+    await rebuildStoreMenusAfterAdminChange();
 
     return NextResponse.json({
       success: true,

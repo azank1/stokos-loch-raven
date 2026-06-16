@@ -13,22 +13,23 @@ export type MenuCategoryTab = {
 };
 
 type CategoriesProps = {
+  // Kept for compatibility with existing page props. No client API fetch is done here.
   storeSlug?: string;
   initialCategories?: MenuCategoryTab[] | null;
 };
 
-const POLLING_MS = 3000;
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
 
-const TRENDING_CATEGORY: MenuCategoryTab = {
-  id: "trending",
-  slug: "trending",
-  name: "Popular Menu Items",
-  description: "",
-  image: "",
-  sortOrder: -1,
-};
+function cleanNumber(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
 
-function slugify(value: string) {
+  const number = Number(cleanString(value).replace(/[^0-9.-]/g, "") || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function slugify(value: unknown) {
   return String(value || "")
     .toLowerCase()
     .trim()
@@ -37,189 +38,67 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function isExpectedNetworkError(error: any) {
-  const message = String(error?.message || error || "").toLowerCase();
+function normalizeCategories(categories?: Partial<MenuCategoryTab>[] | null) {
+  const seen = new Set<string>();
 
-  return (
-    error?.name === "AbortError" ||
-    message.includes("failed to fetch") ||
-    message.includes("network error") ||
-    message.includes("load failed")
-  );
-}
-
-function getCategorySectionId(category: Partial<MenuCategoryTab>) {
-  return slugify(category.slug || category.id || category.name || "");
-}
-
-function isPopularCategory(category: Partial<MenuCategoryTab>) {
-  const id = slugify(String(category.id || ""));
-  const slug = slugify(String(category.slug || ""));
-  const name = slugify(String(category.name || ""));
-
-  return (
-    id === "trending" ||
-    slug === "trending" ||
-    name === "trending" ||
-    name === "popular-menu-items" ||
-    name === "popular-items" ||
-    name === "popular-menu-item"
-  );
-}
-
-function normalizeCategories(
-  categories?: Partial<MenuCategoryTab>[] | null
-): MenuCategoryTab[] {
-  const safeCategories = Array.isArray(categories) ? categories : [];
-
-  return safeCategories
+  return (Array.isArray(categories) ? categories : [])
     .map((category) => {
-      const name = String(category?.name || "").trim();
-
-      const sectionId = getCategorySectionId({
-        id: category?.id,
-        slug: category?.slug,
-        name,
-      });
+      const name = cleanString(category?.name);
+      const id = slugify(category?.slug || category?.id || name);
 
       return {
-        id: sectionId,
-        slug: sectionId,
+        id,
+        slug: id,
         name,
-        description: category?.description || "",
-        image: category?.image || "",
-        sortOrder: Number(category?.sortOrder || 0),
+        description: cleanString(category?.description),
+        image: cleanString(category?.image),
+        sortOrder: cleanNumber(category?.sortOrder),
       };
     })
-    .filter((category) => category.id && category.name);
+    .filter((category) => {
+      if (!category.id || !category.name) return false;
+      if (seen.has(category.id)) return false;
+
+      seen.add(category.id);
+      return true;
+    })
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
 }
 
-function withTrending(
-  categories?: Partial<MenuCategoryTab>[] | null
-): MenuCategoryTab[] {
-  const normalized = normalizeCategories(categories);
-
-  const withoutPopularDuplicate = normalized.filter(
-    (category) => !isPopularCategory(category)
-  );
-
-  return [TRENDING_CATEGORY, ...withoutPopularDuplicate];
-}
-
-function categoriesChanged(
-  oldCategories: MenuCategoryTab[],
-  newCategories: MenuCategoryTab[]
-) {
-  return JSON.stringify(oldCategories) !== JSON.stringify(newCategories);
-}
-
-export default function Categories({
-  storeSlug = "",
-  initialCategories = [],
-}: CategoriesProps) {
+export default function Categories({ initialCategories = [] }: CategoriesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const normalizedInitialCategories = useMemo(() => {
-    return withTrending(initialCategories);
-  }, [initialCategories]);
-
-  const [categories, setCategories] = useState<MenuCategoryTab[]>(
-    normalizedInitialCategories
+  // Important: this component no longer calls /api/store/[slug]/menu-categories.
+  // Categories are rendered from the server-provided initialCategories only.
+  const categories = useMemo(
+    () => normalizeCategories(initialCategories),
+    [initialCategories]
   );
 
-  const [active, setActive] = useState(
-    normalizedInitialCategories[0]?.id || "trending"
-  );
+  const [active, setActive] = useState(categories[0]?.id || "");
 
   useEffect(() => {
-    setCategories(normalizedInitialCategories);
-  }, [normalizedInitialCategories]);
-
-  useEffect(() => {
-    if (!categories.length) return;
-
-    const activeExists = categories.some((category) => category.id === active);
-
-    if (!activeExists) {
-      setActive(categories[0]?.id || "trending");
+    if (!categories.length) {
+      setActive("");
+      return;
     }
-  }, [categories, active]);
 
-  useEffect(() => {
-    if (!storeSlug) return;
-
-    let cancelled = false;
-    let controller: AbortController | null = null;
-
-    async function loadLatestCategories() {
-      controller?.abort();
-      controller = new AbortController();
-
-      try {
-        const response = await fetch(
-          `/api/store/${storeSlug}/menu-categories?t=${Date.now()}`,
-          {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-            headers: {
-              "Cache-Control": "no-cache",
-            },
-          }
-        );
-
-        if (!response.ok) {
-          return;
-        }
-
-        let data: any = null;
-
-        try {
-          data = await response.json();
-        } catch {
-          return;
-        }
-
-        const latestCategories = withTrending(
-          Array.isArray(data?.categories) ? data.categories : []
-        );
-
-        if (cancelled) return;
-
-        setCategories((currentCategories) => {
-          if (categoriesChanged(currentCategories, latestCategories)) {
-            return latestCategories;
-          }
-
-          return currentCategories;
-        });
-      } catch (error: any) {
-        if (isExpectedNetworkError(error)) {
-          return;
-        }
-
-        console.error("Auto category refresh failed:", error);
+    setActive((current) => {
+      if (current && categories.some((category) => category.id === current)) {
+        return current;
       }
-    }
 
-    loadLatestCategories();
-
-    const interval = window.setInterval(loadLatestCategories, POLLING_MS);
-
-    return () => {
-      cancelled = true;
-      controller?.abort();
-      window.clearInterval(interval);
-    };
-  }, [storeSlug]);
+      return categories[0]?.id || "";
+    });
+  }, [categories]);
 
   const handleCategoryClick = (
     id: string,
-    e: MouseEvent<HTMLButtonElement>
+    event: MouseEvent<HTMLButtonElement>
   ) => {
     setActive(id);
 
-    const target = e.currentTarget;
+    const target = event.currentTarget;
     const container = scrollRef.current;
 
     if (container) {
@@ -240,8 +119,7 @@ export default function Categories({
 
     if (section) {
       const yOffset = -150;
-      const y =
-        section.getBoundingClientRect().top + window.pageYOffset + yOffset;
+      const y = section.getBoundingClientRect().top + window.pageYOffset + yOffset;
 
       window.scrollTo({
         top: y,
@@ -276,7 +154,7 @@ export default function Categories({
               <button
                 key={cat.id}
                 type="button"
-                onClick={(e) => handleCategoryClick(cat.id, e)}
+                onClick={(event) => handleCategoryClick(cat.id, event)}
                 className={`
                   relative flex-shrink-0 whitespace-nowrap rounded-full
                   px-5 py-2 text-[12px] font-semibold leading-none

@@ -19,13 +19,12 @@ if (!global.mongooseCache) {
   global.mongooseCache = cached;
 }
 
-export default async function connectMongoDB() {
+export default async function connectDB() {
   const MONGODB_URI = process.env.MONGODB_URI;
+  const MONGODB_DB = process.env.MONGODB_DB || "stokos";
 
   if (!MONGODB_URI) {
-    throw new Error(
-      "MONGODB_URI is missing. Add it in Vercel Project Settings > Environment Variables."
-    );
+    throw new Error("MONGODB_URI is missing in environment variables.");
   }
 
   if (cached.conn && mongoose.connection.readyState === 1) {
@@ -36,13 +35,24 @@ export default async function connectMongoDB() {
     mongoose.set("strictQuery", true);
 
     cached.promise = mongoose.connect(MONGODB_URI, {
-      dbName: "stokos",
+      dbName: MONGODB_DB,
       bufferCommands: false,
-      maxPoolSize: 20,
-      minPoolSize: 1,
-      maxIdleTimeMS: 30_000,
-      serverSelectionTimeoutMS: 10_000,
+      autoIndex: process.env.NODE_ENV !== "production",
+
+      // Important for Windows/local DNS + MongoDB Atlas SRV connection
+      family: 4,
+
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      maxIdleTimeMS: 60_000,
+
+      // 3s was too aggressive for Atlas TLS connection
+      serverSelectionTimeoutMS: 15_000,
+      connectTimeoutMS: 15_000,
       socketTimeoutMS: 45_000,
+      heartbeatFrequencyMS: 10_000,
+
+      retryWrites: true,
     });
   }
 
@@ -53,5 +63,15 @@ export default async function connectMongoDB() {
     cached.promise = null;
     cached.conn = null;
     throw error;
+  }
+}
+
+export async function pingMongoDB() {
+  try {
+    const conn = await connectDB();
+    await conn.connection.db?.command({ ping: 1 });
+    return true;
+  } catch {
+    return false;
   }
 }

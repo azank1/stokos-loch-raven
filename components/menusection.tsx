@@ -86,11 +86,11 @@ export default function MenuSection({
               sm:block
             "
           >
-            {visibleProducts.length} Items
+            {filteredProducts.length} Items
           </span>
         </div>
 
-        {!normalizedSearch && (
+        {!normalizedSearch && filteredProducts.length > visibleProducts.length && (
           <button
             type="button"
             className="
@@ -123,7 +123,7 @@ export default function MenuSection({
       >
         {visibleProducts.map((product, index) => (
           <div
-            key={product.id || product._id || `${product.title}-${index}`}
+            key={product.id || product._id || `${product.title || product.name}-${index}`}
             className={`
               min-w-0 h-full
               ${!normalizedSearch && index >= 4 ? "hidden md:block" : "block"}

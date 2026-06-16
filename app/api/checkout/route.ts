@@ -34,10 +34,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const origin =
-      req.headers.get("origin") ||
-      process.env.NEXT_PUBLIC_BASE_URL ||
-      "http://localhost:3000";
+   const origin =
+  req.headers.get("origin") ||
+  process.env.NEXT_PUBLIC_BASE_URL ||
+  "http://localhost:3000";
 
     const cleanOrigin = origin.replace(/\/$/, "");
 

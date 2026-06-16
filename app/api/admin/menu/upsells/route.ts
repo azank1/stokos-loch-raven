@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import UpsellRule from "@/models/upsellrule";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -175,6 +176,7 @@ export async function POST(req: Request) {
     }
 
     const upsellRule = await UpsellRule.create(payload);
+    await rebuildStoreMenusAfterAdminChange(body, upsellRule);
 
     return NextResponse.json(
       { success: true, data: upsellRule },
@@ -232,6 +234,8 @@ export async function PATCH(req: Request) {
       );
     }
 
+    await rebuildStoreMenusAfterAdminChange(body, upsellRule);
+
     return NextResponse.json({ success: true, data: upsellRule });
   } catch (error: any) {
     console.error("PATCH UPSELL RULE ERROR:", error);
@@ -272,6 +276,8 @@ export async function DELETE(req: Request) {
         { status: 404 }
       );
     }
+
+    await rebuildStoreMenusAfterAdminChange(deletedUpsellRule);
 
     return NextResponse.json({
       success: true,

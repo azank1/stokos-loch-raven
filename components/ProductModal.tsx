@@ -35,6 +35,7 @@ type ProductLike = {
   attachedModifierGroups?: unknown[];
   relatedUpsells?: unknown[];
   upsell?: string;
+  hasDetails?: boolean;
 };
 
 type ProductSize = {
@@ -78,6 +79,43 @@ type SelectedModifierDetail = {
 };
 
 const FALLBACK_IMAGE = "/images/placeholder-food.png";
+const PRODUCT_DETAIL_CACHE_TTL_MS = 60_000;
+
+const productDetailCache = new Map<
+  string,
+  { product: ProductLike; expiresAt: number }
+>();
+
+function getProductDetailCacheKey(storeSlug: string, detailId: string) {
+  return `${storeSlug}::${detailId}`.toLowerCase();
+}
+
+function readCachedProductDetails(storeSlug: string, detailId: string) {
+  const key = getProductDetailCacheKey(storeSlug, detailId);
+  const cached = productDetailCache.get(key);
+
+  if (!cached) return null;
+
+  if (Date.now() > cached.expiresAt) {
+    productDetailCache.delete(key);
+    return null;
+  }
+
+  return cached.product;
+}
+
+function writeCachedProductDetails(
+  storeSlug: string,
+  detailId: string,
+  product: ProductLike
+) {
+  const key = getProductDetailCacheKey(storeSlug, detailId);
+  productDetailCache.set(key, {
+    product,
+    expiresAt: Date.now() + PRODUCT_DETAIL_CACHE_TTL_MS,
+  });
+}
+
 
 function isRecord(value: unknown): value is AnyRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -291,6 +329,24 @@ function normalizeModifierGroups(product: ProductLike | null): ModifierGroup[] {
     .sort((a: ModifierGroup, b: ModifierGroup) => a.sortOrder - b.sortOrder);
 }
 
+function productHasPreloadedDetails(product: ProductLike | null) {
+  if (!product) return false;
+  if (product.hasDetails === true) return true;
+
+  const rawGroups =
+    readArray(product.modifierGroups).length > 0
+      ? readArray(product.modifierGroups)
+      : readArray(product.attachedModifierGroups);
+
+  const hasSizes = readArray(product.sizes).length > 0;
+  const hasModifierOptions = rawGroups.some((group) => {
+    if (!isRecord(group)) return false;
+    return readArray(group.options).length > 0 || readArray(group.modifierOptions).length > 0;
+  });
+
+  return hasSizes || hasModifierOptions;
+}
+
 function StatusBadge({ label, tone }: { label: string; tone: "success" | "danger" | "neutral" }) {
   const toneClass =
     tone === "success"
@@ -341,6 +397,25 @@ export default function ProductModal({ product, isOpen, onClose }: ProductModalP
       return;
     }
 
+    // ✅ Main speed fix:
+    // If products were server-preloaded with sizes/modifierGroups,
+    // do not call the detail API again on modal open.
+    if (productHasPreloadedDetails(baseProduct)) {
+      setDetailsLoading(false);
+      return;
+    }
+
+    const cachedDetails = readCachedProductDetails(storeSlug, detailId);
+    if (cachedDetails) {
+      setProductDetails({
+        ...baseProduct,
+        ...cachedDetails,
+        storeSlug: cachedDetails.storeSlug || baseProduct.storeSlug || storeSlug,
+      });
+      setDetailsLoading(false);
+      return;
+    }
+
     async function loadProductDetails() {
       setDetailsLoading(true);
       try {
@@ -358,12 +433,15 @@ export default function ProductModal({ product, isOpen, onClose }: ProductModalP
         const data = await response.json();
 
         if (data?.success && data?.product) {
-          setProductDetails({
+          const mergedProduct = {
             ...baseProduct,
             ...data.product,
-            // ✅ Safe storeSlug merge — no "possibly null" TS error
+            // Safe storeSlug merge — no "possibly null" TS error
             storeSlug: data.product?.storeSlug || baseProduct?.storeSlug || storeSlug,
-          });
+          };
+
+          writeCachedProductDetails(storeSlug, detailId, mergedProduct);
+          setProductDetails(mergedProduct);
           setDetailsError("");
         } else {
           throw new Error(data?.message || "Product details missing");

@@ -5,7 +5,7 @@ import Image from "next/image";
 import { Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 
-// ✅ Lazy load ProductModal — zero cost until user clicks
+// Lazy-load the modal JavaScript. Heavy options/modifiers load only when a product is opened.
 const ProductModal = dynamic(() => import("./ProductModal"), {
   ssr: false,
   loading: () => null,
@@ -113,7 +113,10 @@ function ProductCard({ product }: any) {
 
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); handleOpen(); }}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleOpen();
+              }}
               className="
                 shrink-0
                 w-9 h-9 sm:w-10 sm:h-10 md:w-9 md:h-9
@@ -133,7 +136,6 @@ function ProductCard({ product }: any) {
         </div>
       </div>
 
-      {/* ✅ Modal only mounts when showModal is true */}
       {showModal && (
         <ProductModal product={product} isOpen={showModal} onClose={handleClose} />
       )}

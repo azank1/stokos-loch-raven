@@ -177,6 +177,36 @@ function getApiUrl(type: MenuEntity) {
   return `/api/admin/menu/${API_ROUTES[type]}`;
 }
 
+async function apiRebuildStoreMenuSnapshot(
+  type: MenuEntity,
+  source?: unknown,
+  fallback?: unknown
+) {
+  try {
+    const res = await fetch("/api/admin/storemenus/rebuild", {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+      },
+      body: JSON.stringify({
+        type,
+        source,
+        fallback,
+      }),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok || json?.success === false) {
+      console.warn("Store menu snapshot rebuild failed:", json);
+    }
+  } catch (error) {
+    console.warn("Store menu snapshot rebuild request failed:", error);
+  }
+}
+
 async function apiGet<T>(type: MenuEntity): Promise<T[]> {
   try {
     const res = await fetch(`${getApiUrl(type)}?t=${Date.now()}`, {
@@ -217,7 +247,10 @@ async function apiCreate<T>(type: MenuEntity, payload: T): Promise<T> {
     throw new Error(json?.message || `Failed to create ${type}`);
   }
 
-  return getItemFromResponse<T>(json, type, payload);
+  const item = getItemFromResponse<T>(json, type, payload);
+  await apiRebuildStoreMenuSnapshot(type, item, payload);
+
+  return item;
 }
 
 async function apiUpdate<T extends object>(
@@ -249,7 +282,10 @@ async function apiUpdate<T extends object>(
     throw new Error(json?.message || `Failed to update ${type}`);
   }
 
-  return getItemFromResponse<T>(json, type, payload);
+  const item = getItemFromResponse<T>(json, type, payload);
+  await apiRebuildStoreMenuSnapshot(type, item, payload);
+
+  return item;
 }
 
 async function apiDelete(type: MenuEntity, id: string): Promise<void> {
@@ -267,6 +303,8 @@ async function apiDelete(type: MenuEntity, id: string): Promise<void> {
     console.error(`DELETE ${type} ERROR:`, json);
     throw new Error(json?.message || `Failed to delete ${type}`);
   }
+
+  await apiRebuildStoreMenuSnapshot(type, json, { id });
 }
 
 function sortBySortOrder<T extends { sortOrder?: number }>(items: T[]) {

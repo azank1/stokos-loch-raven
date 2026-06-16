@@ -7,6 +7,7 @@ import {
   invalidateMenuCategories,
   invalidateMenuProducts,
 } from "@/lib/server/menu-cache";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -448,6 +449,7 @@ export async function POST(req: Request) {
 
     invalidateMenuCategories();
     invalidateMenuProducts();
+    await rebuildStoreMenusAfterAdminChange(body, category, config);
 
     return NextResponse.json(
       {
@@ -557,6 +559,7 @@ export async function PATCH(req: Request) {
 
     invalidateMenuCategories();
     invalidateMenuProducts();
+    await rebuildStoreMenusAfterAdminChange(body, category, config);
 
     return NextResponse.json({
       success: true,
@@ -612,6 +615,7 @@ export async function DELETE(req: Request) {
       await CategoryStoreConfig.deleteMany(duplicateCleanupQuery);
       invalidateMenuCategories();
       invalidateMenuProducts();
+      await rebuildStoreMenusAfterAdminChange({ storeId: configStoreId }, config);
 
       return NextResponse.json({
         success: true,
@@ -636,6 +640,7 @@ export async function DELETE(req: Request) {
       });
       invalidateMenuCategories();
       invalidateMenuProducts();
+      await rebuildStoreMenusAfterAdminChange({ storeId }, category);
 
       return NextResponse.json({
         success: true,
@@ -647,6 +652,7 @@ export async function DELETE(req: Request) {
     await Category.deleteOne({ _id: category._id });
     invalidateMenuCategories();
     invalidateMenuProducts();
+    await rebuildStoreMenusAfterAdminChange(category);
 
     return NextResponse.json({
       success: true,

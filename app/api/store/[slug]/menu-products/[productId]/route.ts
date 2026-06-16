@@ -15,8 +15,15 @@ export async function GET(_request: Request, { params }: RouteProps) {
 
     if (!slug || !productId) {
       return NextResponse.json(
-        { success: false, product: null, message: "Store slug and product id are required." },
-        { status: 400 }
+        {
+          success: false,
+          product: null,
+          message: "Store slug and product id are required.",
+        },
+        {
+          status: 400,
+          headers: { "Cache-Control": "no-store" },
+        }
       );
     }
 
@@ -24,24 +31,39 @@ export async function GET(_request: Request, { params }: RouteProps) {
 
     if (!product) {
       return NextResponse.json(
-        { success: false, product: null, message: "Product not found." },
-        { status: 404 }
+        {
+          success: false,
+          product: null,
+          message: "Product not found.",
+        },
+        {
+          status: 404,
+          headers: { "Cache-Control": "no-store" },
+        }
       );
     }
 
     return NextResponse.json(
-      { success: true, product, updatedAt: new Date().toISOString() },
+      {
+        success: true,
+        product,
+        updatedAt: new Date().toISOString(),
+      },
       {
         headers: {
-          // Detail is fresh every time (modifiers may change)
           "Cache-Control": "no-store, no-cache, must-revalidate",
         },
       }
     );
   } catch (error) {
     console.error("Store menu product detail API error:", error);
+
     return NextResponse.json(
-      { success: false, product: null, message: "Failed to load product details." },
+      {
+        success: false,
+        product: null,
+        message: "Failed to load product details.",
+      },
       {
         status: 500,
         headers: { "Cache-Control": "no-store" },
