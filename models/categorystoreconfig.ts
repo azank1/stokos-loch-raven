@@ -102,7 +102,7 @@ const CategoryStoreConfigSchema = new Schema(
 );
 
 CategoryStoreConfigSchema.pre("validate", function () {
-  normalizePayload(this as any, true);
+  normalizePayload(this as any);
 });
 
 CategoryStoreConfigSchema.pre("findOneAndUpdate", function () {
