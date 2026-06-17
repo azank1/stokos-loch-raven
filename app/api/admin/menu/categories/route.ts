@@ -5,6 +5,7 @@ import connectDB from "@/lib/mongodb";
 import Category from "@/models/category";
 import CategoryStoreConfig from "@/models/categorystoreconfig";
 import { invalidateMenuCategories } from "@/lib/server/menu-cache";
+import { ensureCategoryStoreConfigIndexes } from "@/lib/server/category-store-config-indexes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -665,6 +666,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     await connectDB();
+    await ensureCategoryStoreConfigIndexes();
     const body = await req.json();
     const categoryPayload = buildCategoryPayload(body);
     const storeIds = extractStoreIds(body);
@@ -710,6 +712,7 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     await connectDB();
+    await ensureCategoryStoreConfigIndexes();
     const body = await req.json();
     const categoryId = cleanString(body.categoryId || body.id || body._id);
     const categoryPayload = buildCategoryPayload(body);
@@ -802,6 +805,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   try {
     await connectDB();
+    await ensureCategoryStoreConfigIndexes();
 
     const { searchParams } = new URL(req.url);
     const id = cleanString(searchParams.get("id"));

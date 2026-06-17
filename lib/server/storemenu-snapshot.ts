@@ -56,7 +56,7 @@ function getCachedSnapshot(storeSlug: string) {
 function setCachedSnapshot(
   storeSlug: string,
   data: StoreMenuSnapshot,
-  ttlMs = SNAPSHOT_CACHE_TTL_MS
+  ttlMs = SNAPSHOT_CACHE_TTL_MS,
 ) {
   snapshotCache.set(storeSlug, {
     data,
@@ -75,7 +75,7 @@ export function clearStoreMenuSnapshotCache(storeSlug?: string) {
 }
 
 export async function getStoreMenuSnapshot(
-  storeSlug: string
+  storeSlug: string,
 ): Promise<StoreMenuSnapshot> {
   const cleanStoreSlug = normalizeStoreSlug(storeSlug);
 
@@ -94,7 +94,6 @@ export async function getStoreMenuSnapshot(
         _id: 0,
         storeSlug: 1,
         products: 1,
-        // Keep only for old snapshots. New snapshots save menuProducts as [].
         menuProducts: 1,
         version: 1,
         builtAt: 1,
@@ -117,8 +116,6 @@ export async function getStoreMenuSnapshot(
 
     const result: StoreMenuSnapshot = {
       storeSlug: cleanStoreSlug,
-      // Categories are intentionally not read from StoreMenu snapshot anymore.
-      // Frontend categories must come from CategoryStoreConfig via menucategories.ts.
       categories: [],
       products,
       menuProducts: products,
@@ -132,7 +129,7 @@ export async function getStoreMenuSnapshot(
   } catch (error: any) {
     console.warn(
       `StoreMenu snapshot read failed for ${cleanStoreSlug}:`,
-      error?.message || error
+      error?.message || error,
     );
 
     return emptySnapshot(cleanStoreSlug, "read-failed");

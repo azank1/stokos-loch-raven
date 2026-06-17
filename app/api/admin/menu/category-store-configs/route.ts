@@ -5,6 +5,7 @@ import connectDB from "@/lib/mongodb";
 import Category from "@/models/category";
 import CategoryStoreConfig from "@/models/categorystoreconfig";
 import { invalidateMenuCategories } from "@/lib/server/menu-cache";
+import { ensureCategoryStoreConfigIndexes } from "@/lib/server/category-store-config-indexes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +28,72 @@ function slugify(value: unknown) {
 
 function normalizeStoreId(value: unknown) {
   return slugify(value);
+}
+
+function uniqueStrings(values: unknown[]) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  values.forEach((value) => {
+    const clean = cleanString(value);
+    if (!clean || seen.has(clean)) return;
+
+    seen.add(clean);
+    output.push(clean);
+  });
+
+  return output;
+}
+
+function extractStoreIds(body: any) {
+  const rawValues = [
+    body?.storeIds,
+    body?.storeSlugs,
+    body?.stores,
+    body?.selectedStores,
+    body?.selectedStoreIds,
+    body?.selectedStoreSlugs,
+    body?.storeId,
+    body?.storeSlug,
+    body?.store,
+  ];
+
+  const values: unknown[] = [];
+
+  function add(value: unknown) {
+    if (value === null || value === undefined) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+
+    if (typeof value === "object") {
+      const item = value as Record<string, unknown>;
+      add(
+        item.storeId ||
+          item.storeSlug ||
+          item.slug ||
+          item.id ||
+          item._id ||
+          item.name,
+      );
+      return;
+    }
+
+    values.push(value);
+  }
+
+  rawValues.forEach(add);
+
+  return uniqueStrings(
+    values
+      .map(normalizeStoreId)
+      .filter(
+        (storeId) =>
+          storeId && !["all", "all-stores", "all-store"].includes(storeId),
+      ),
+  );
 }
 
 function cleanNumber(value: unknown) {
@@ -273,6 +340,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     await connectDB();
+    await ensureCategoryStoreConfigIndexes();
     const body = await req.json();
     const category = await getCategoryByIdOrSlug(
       cleanString(body.categoryId || body.id || body._id),
@@ -280,50 +348,79 @@ export async function POST(req: Request) {
         body.categorySlug || body.slug || body.categoryName || body.name,
       ),
     );
-    const payload = buildConfigPayload(body, category);
+    const storeIds = extractStoreIds(body);
 
-    let config: any;
-
-    try {
-      config = await CategoryStoreConfig.findOneAndUpdate(
-        { categoryId: payload.categoryId, storeId: payload.storeId },
-        { $set: payload },
-        {
-          new: true,
-          upsert: true,
-          runValidators: true,
-          setDefaultsOnInsert: true,
-        },
-      );
-    } catch (error: any) {
-      if (error?.code !== 11000) throw error;
-
-      await cleanupDuplicateCategoryStoreConfigs(
-        payload.categoryId,
-        payload.categorySlug,
-      );
-      config = await CategoryStoreConfig.findOneAndUpdate(
-        { categoryId: payload.categoryId, storeId: payload.storeId },
-        { $set: payload },
-        {
-          new: true,
-          upsert: true,
-          runValidators: true,
-          setDefaultsOnInsert: true,
-        },
+    if (!storeIds.length) {
+      return NextResponse.json(
+        { success: false, message: "At least one store is required" },
+        { status: 400 },
       );
     }
 
-    await cleanupDuplicateCategoryStoreConfigs(
-      payload.categoryId,
-      payload.categorySlug,
+    const savedConfigs: any[] = [];
+    let lastPayload: any = null;
+
+    for (const storeId of storeIds) {
+      const payload = buildConfigPayload({ ...body, storeId }, category);
+      lastPayload = payload;
+
+      let config: any;
+
+      try {
+        config = await CategoryStoreConfig.findOneAndUpdate(
+          { categoryId: payload.categoryId, storeId: payload.storeId },
+          { $set: payload },
+          {
+            new: true,
+            upsert: true,
+            runValidators: true,
+            setDefaultsOnInsert: true,
+          },
+        );
+      } catch (error: any) {
+        if (error?.code !== 11000) throw error;
+
+        await cleanupDuplicateCategoryStoreConfigs(
+          payload.categoryId,
+          payload.categorySlug,
+        );
+        config = await CategoryStoreConfig.findOneAndUpdate(
+          { categoryId: payload.categoryId, storeId: payload.storeId },
+          { $set: payload },
+          {
+            new: true,
+            upsert: true,
+            runValidators: true,
+            setDefaultsOnInsert: true,
+          },
+        );
+      }
+
+      savedConfigs.push(config?.toObject ? config.toObject() : config);
+    }
+
+    const freshConfigs = lastPayload
+      ? await cleanupDuplicateCategoryStoreConfigs(
+          lastPayload.categoryId,
+          lastPayload.categorySlug,
+        )
+      : savedConfigs;
+    const freshByStore = new Map(
+      freshConfigs.map((config: any) => [normalizeStoreId(config.storeId), config]),
     );
+    const responseConfigs = storeIds
+      .map((storeId) => freshByStore.get(storeId))
+      .filter(Boolean);
+
     invalidateCategoryCache();
 
     return NextResponse.json(
       {
         success: true,
-        data: formatConfig(config?.toObject ? config.toObject() : config),
+        data:
+          responseConfigs.length === 1
+            ? formatConfig(responseConfigs[0])
+            : responseConfigs.map(formatConfig),
       },
       { status: 201 },
     );
@@ -339,6 +436,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   try {
     await connectDB();
+    await ensureCategoryStoreConfigIndexes();
     const { searchParams } = new URL(req.url);
     const id = cleanString(
       searchParams.get("id") || searchParams.get("configId"),
