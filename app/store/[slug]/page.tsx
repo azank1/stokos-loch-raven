@@ -12,8 +12,8 @@ import ScrollMenu from "@/components/scrollmenu";
 import MenuSectionsClient from "@/components/menusectionclient";
 import { getStoreMenuSnapshot } from "@/lib/server/storemenu-snapshot";
 
-// Public store pages are served from the StoreMenu snapshot.
-// Admin rebuild updates the snapshot and should revalidate this path.
+// Public store pages must be served from the StoreMenu snapshot only.
+// Admin rebuild updates the snapshot and revalidates this path.
 export const dynamic = "force-static";
 export const revalidate = 30;
 export const dynamicParams = true;

@@ -176,7 +176,12 @@ export async function POST(req: Request) {
     }
 
     const upsellRule = await UpsellRule.create(payload);
-    await rebuildStoreMenusAfterAdminChange(body, upsellRule);
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "upsell-save" },
+      body,
+      payload,
+      upsellRule
+    );
 
     return NextResponse.json(
       { success: true, data: upsellRule },
@@ -222,6 +227,8 @@ export async function PATCH(req: Request) {
       );
     }
 
+    const previousUpsellRule = await UpsellRule.findById(id).lean();
+
     const upsellRule = await UpsellRule.findByIdAndUpdate(id, payload, {
       new: true,
       runValidators: true,
@@ -234,7 +241,13 @@ export async function PATCH(req: Request) {
       );
     }
 
-    await rebuildStoreMenusAfterAdminChange(body, upsellRule);
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "upsell-update" },
+      body,
+      previousUpsellRule,
+      payload,
+      upsellRule
+    );
 
     return NextResponse.json({ success: true, data: upsellRule });
   } catch (error: any) {
@@ -277,7 +290,10 @@ export async function DELETE(req: Request) {
       );
     }
 
-    await rebuildStoreMenusAfterAdminChange(deletedUpsellRule);
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "upsell-delete" },
+      deletedUpsellRule
+    );
 
     return NextResponse.json({
       success: true,

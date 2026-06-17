@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
 import UpsellStoreConfig from "@/models/upsellstoreconfig";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,6 +104,7 @@ export async function POST(request: Request) {
       : [body];
 
     const savedConfigs = [];
+    const previousConfigs = [];
 
     for (const rawConfig of configs) {
       const config = normalizeConfig(rawConfig);
@@ -137,6 +139,13 @@ export async function POST(request: Request) {
         );
       }
 
+      const previousConfig = await UpsellStoreConfig.findOne({
+        upsellId: config.upsellId,
+        storeId: config.storeId,
+      }).lean();
+
+      if (previousConfig) previousConfigs.push(previousConfig);
+
       const savedConfig = await UpsellStoreConfig.findOneAndUpdate(
         {
           upsellId: config.upsellId,
@@ -155,6 +164,13 @@ export async function POST(request: Request) {
 
       savedConfigs.push(savedConfig);
     }
+
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "upsell-store-config-save" },
+      body,
+      previousConfigs,
+      savedConfigs
+    );
 
     return NextResponse.json({
       success: true,
@@ -204,6 +220,8 @@ export async function PUT(request: Request) {
           storeId: config.storeId,
         };
 
+    const previousConfig = await UpsellStoreConfig.findOne(filter).lean();
+
     const updatedConfig = await UpsellStoreConfig.findOneAndUpdate(
       filter,
       {
@@ -216,6 +234,13 @@ export async function PUT(request: Request) {
         setDefaultsOnInsert: true,
       }
     ).lean();
+
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "upsell-store-config-update" },
+      body,
+      previousConfig,
+      updatedConfig
+    );
 
     return NextResponse.json({
       success: true,
@@ -268,7 +293,14 @@ export async function DELETE(request: Request) {
           storeId,
         };
 
+    const previousConfig = await UpsellStoreConfig.findOne(filter).lean();
     await UpsellStoreConfig.deleteOne(filter);
+
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "upsell-store-config-delete" },
+      previousConfig,
+      { upsellId, storeId }
+    );
 
     return NextResponse.json({
       success: true,

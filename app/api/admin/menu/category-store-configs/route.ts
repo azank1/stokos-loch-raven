@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mongoose from "mongoose";
 import connectDB from "@/lib/mongodb";
 import CategoryStoreConfig from "@/models/categorystoreconfig";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -142,6 +143,8 @@ export async function POST(req: Request) {
       sortOrder: Number(body.sortOrder || 0),
     };
 
+    const previousConfig = await CategoryStoreConfig.findOne({ categoryId, storeId }).lean();
+
     const config = await CategoryStoreConfig.findOneAndUpdate(
       { categoryId, storeId },
       { $set: payload },
@@ -149,6 +152,13 @@ export async function POST(req: Request) {
     );
 
     await cleanupDuplicateCategoryStoreConfigs(categoryId, payload.categorySlug);
+    await rebuildStoreMenusAfterAdminChange(
+      { storeId, reason: "category-store-config-save" },
+      body,
+      previousConfig,
+      payload,
+      config
+    );
 
     return NextResponse.json({ success: true, data: config }, { status: 201 });
   } catch (error: any) {
@@ -174,12 +184,24 @@ export async function DELETE(req: Request) {
       );
     }
 
+    const previousConfigs = await CategoryStoreConfig.collection
+      .find({
+        ...categoryIdMatch(categoryId),
+        storeId,
+      })
+      .toArray();
+
     await CategoryStoreConfig.collection.deleteMany({
       ...categoryIdMatch(categoryId),
       storeId,
     });
 
     await cleanupDuplicateCategoryStoreConfigs(categoryId);
+    await rebuildStoreMenusAfterAdminChange(
+      { storeId, reason: "category-store-config-delete" },
+      previousConfigs,
+      { categoryId, storeId }
+    );
 
     return NextResponse.json({ success: true, message: "Category config deleted" });
   } catch (error: any) {

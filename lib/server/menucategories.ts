@@ -33,35 +33,19 @@ function slugify(value: unknown) {
     .replace(/^-+|-+$/g, "");
 }
 
-function normalizeStoreId(value: unknown) {
-  return cleanString(value).toLowerCase();
+function normalizeStoreSlug(value: unknown) {
+  return slugify(value);
 }
 
 function isActiveQuery() {
   return {
     $or: [
       { status: "Active" },
-      { status: "active" },
-      { status: "Published" },
-      { status: "published" },
-      { status: "" },
       { status: { $exists: false } },
+      { status: "" },
+      { status: null },
     ],
   };
-}
-
-function isVisibleCategory(category: any) {
-  if (category?.hidden === true) return false;
-
-  const status = cleanString(category?.status).toLowerCase();
-  if (["inactive", "hidden", "disabled", "deleted"].includes(status)) {
-    return false;
-  }
-
-  if (typeof category?.isActive === "boolean") return category.isActive;
-  if (typeof category?.active === "boolean") return category.active;
-
-  return true;
 }
 
 function normalizeCategoryFromCategoryDoc(
@@ -99,13 +83,18 @@ function uniqueBySlug(categories: FrontendMenuCategory[]) {
 }
 
 export async function getStoreMenuCategoriesFromDB(
-  _storeSlug?: string
+  storeSlug: string
 ): Promise<FrontendMenuCategory[]> {
+  const cleanStoreSlug = normalizeStoreSlug(storeSlug);
+
+  if (!cleanStoreSlug) return [];
+
   await connectDB();
 
-  // Important: frontend menu categories now come directly from the global
-  // categories collection. They are NOT filtered by StoreMenu products and
-  // NOT filtered by CategoryStoreConfig, so empty categories also show.
+  // Important: frontend menu categories are global now.
+  // They come only from the categories collection, not from StoreMenu products
+  // and not from CategoryStoreConfig. StoreMenu products still decide which
+  // products appear under each category for each store.
   const categories = await Category.find(isActiveQuery())
     .select({
       _id: 1,
@@ -119,31 +108,27 @@ export async function getStoreMenuCategoriesFromDB(
       thumbnail: 1,
       sortOrder: 1,
       status: 1,
-      isActive: 1,
-      active: 1,
-      hidden: 1,
       updatedAt: 1,
     })
-    .sort({ sortOrder: 1, updatedAt: -1, name: 1 })
+    .sort({ sortOrder: 1, name: 1, updatedAt: -1 })
     .lean<any[]>();
 
   return uniqueBySlug(
-    (Array.isArray(categories) ? categories : [])
-      .filter(isVisibleCategory)
+    categories
       .map((category, index) => normalizeCategoryFromCategoryDoc(category, index))
       .filter(Boolean) as FrontendMenuCategory[]
   ).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
 }
 
 const getCachedStoreMenuCategories = unstable_cache(
-  async (_storeSlug: string) => getStoreMenuCategoriesFromDB(_storeSlug),
+  getStoreMenuCategoriesFromDB,
   ["store-menu-categories-global-v1"],
   {
     revalidate: 30,
-    tags: ["store-menu-categories", "store-menu", "categories"],
+    tags: ["store-menu-categories", "store-menu"],
   }
 );
 
 export async function getStoreMenuCategories(storeSlug: string) {
-  return getCachedStoreMenuCategories(normalizeStoreId(storeSlug));
+  return getCachedStoreMenuCategories(normalizeStoreSlug(storeSlug));
 }

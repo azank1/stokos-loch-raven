@@ -8,6 +8,7 @@ import CategoryStoreConfig from "@/models/categorystoreconfig";
 import ModifierGroup from "@/models/modifiergroup";
 import UpsellRule from "@/models/upsellrule";
 import { invalidateMenuProducts } from "@/lib/server/menu-cache";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1113,7 +1114,6 @@ export async function POST(req: Request) {
 
     const body = await req.json();
     const payload = buildProductMasterPayload(body);
-
     await cleanupDuplicateProductMastersBySlug(payload.slug);
 
     const duplicateProduct = await Product.findOne(
@@ -1133,12 +1133,13 @@ export async function POST(req: Request) {
 
     const product = await Product.create(payload);
 
-    await saveStoreConfigs(String(product._id), body);
+    const savedConfigs = await saveStoreConfigs(String(product._id), body);
 
     const configs = await getProductConfigs([String(product._id)]);
     const data = formatProductWithConfigs(product, configs, normalizeStoreId(body.storeId));
 
     invalidateMenuProducts();
+    await rebuildStoreMenusAfterAdminChange(body, product, savedConfigs, configs);
 
     return NextResponse.json({ success: true, data }, { status: 201 });
   } catch (error: any) {
@@ -1171,6 +1172,7 @@ export async function PATCH(req: Request) {
     }
 
     const payload = buildProductMasterPayload(body);
+    const previousConfigs = await getProductConfigs([id]);
 
     await cleanupDuplicateProductMastersBySlug(payload.slug);
 
@@ -1202,12 +1204,13 @@ export async function PATCH(req: Request) {
       );
     }
 
-    await saveStoreConfigs(String(product._id), body);
+    const savedConfigs = await saveStoreConfigs(String(product._id), body);
 
     const configs = await getProductConfigs([String(product._id)]);
     const data = formatProductWithConfigs(product, configs, normalizeStoreId(body.storeId));
 
     invalidateMenuProducts();
+    await rebuildStoreMenusAfterAdminChange(body, product, previousConfigs, savedConfigs, configs);
 
     return NextResponse.json({ success: true, data });
   } catch (error: any) {
@@ -1239,6 +1242,7 @@ export async function DELETE(req: Request) {
       );
     }
 
+    const previousConfigs = await getProductConfigs([id]);
     const deletedProduct = await Product.findByIdAndDelete(id);
 
     if (!deletedProduct) {
@@ -1250,6 +1254,7 @@ export async function DELETE(req: Request) {
 
     await ProductStoreConfig.collection.deleteMany(productIdMatch(id));
     invalidateMenuProducts();
+    await rebuildStoreMenusAfterAdminChange(deletedProduct, previousConfigs);
 
     return NextResponse.json({
       success: true,

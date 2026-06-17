@@ -5,6 +5,7 @@ import ProductStoreConfig from "@/models/productstoreconfig";
 import UpsellRule from "@/models/upsellrule";
 import Category from "@/models/category";
 import CategoryStoreConfig from "@/models/categorystoreconfig";
+import { rebuildStoreMenusAfterAdminChange } from "@/lib/server/storemenu-admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -413,6 +414,7 @@ export async function POST(req: Request) {
     );
 
     await cleanupDuplicateProductStoreConfigs(payload.productId);
+    await rebuildStoreMenusAfterAdminChange(body, payload, config);
 
     return NextResponse.json({ success: true, data: config }, { status: 201 });
   } catch (error: any) {
@@ -432,13 +434,20 @@ export async function PATCH(req: Request) {
     const payload = await buildPayload(body);
 
     let config = null;
+    let previousConfig = null;
 
     if (id && isValidObjectId(id)) {
+      previousConfig = await ProductStoreConfig.findById(id).lean();
       config = await ProductStoreConfig.findByIdAndUpdate(id, payload, {
         new: true,
         runValidators: true,
       });
     } else {
+      previousConfig = await ProductStoreConfig.findOne({
+        productId: payload.productId,
+        storeId: payload.storeId,
+      }).lean();
+
       config = await ProductStoreConfig.findOneAndUpdate(
         { productId: payload.productId, storeId: payload.storeId },
         { $set: payload },
@@ -447,6 +456,7 @@ export async function PATCH(req: Request) {
     }
 
     await cleanupDuplicateProductStoreConfigs(payload.productId);
+    await rebuildStoreMenusAfterAdminChange(body, previousConfig, payload, config);
 
     return NextResponse.json({ success: true, data: config });
   } catch (error: any) {
@@ -466,9 +476,17 @@ export async function DELETE(req: Request) {
     const productId = cleanString(searchParams.get("productId"));
     const storeId = normalizeStoreId(searchParams.get("storeId"));
 
+    let previousConfig = null;
+
     if (id && isValidObjectId(id)) {
+      previousConfig = await ProductStoreConfig.findById(id).lean();
       await ProductStoreConfig.findByIdAndDelete(id);
     } else if (productId && storeId) {
+      previousConfig = await ProductStoreConfig.findOne({
+        ...productIdMatch(productId),
+        storeId,
+      }).lean();
+
       await ProductStoreConfig.collection.deleteMany({
         ...productIdMatch(productId),
         storeId,
@@ -480,6 +498,8 @@ export async function DELETE(req: Request) {
         { status: 400 }
       );
     }
+
+    await rebuildStoreMenusAfterAdminChange(previousConfig, { productId, storeId });
 
     return NextResponse.json({ success: true, message: "Config deleted" });
   } catch (error: any) {

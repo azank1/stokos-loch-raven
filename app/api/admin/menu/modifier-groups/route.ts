@@ -355,6 +355,11 @@ export async function PUT(request: Request) {
       ? { _id: new mongoose.Types.ObjectId(payload._id) }
       : { slug: payload._id };
 
+    const previousGroup = await ModifierGroup.findOne(query).lean();
+    const previousAssignments = previousGroup?._id
+      ? await ModifierGroupAssignment.find({ modifierGroupId: String(previousGroup._id) }).lean()
+      : [];
+
     const group = await ModifierGroup.findOneAndUpdate(
       query,
       {
@@ -386,7 +391,13 @@ const data = allGroups.find(
   (item) => getRecordId(item) === modifierGroupId
 );
 
-    await rebuildStoreMenusAfterAdminChange(body, data, payload.assignments);
+    await rebuildStoreMenusAfterAdminChange(
+      body,
+      previousGroup,
+      previousAssignments,
+      data,
+      payload.assignments
+    );
 
     return NextResponse.json({
       success: true,
@@ -436,12 +447,19 @@ export async function DELETE(request: Request) {
       : { slug: id };
 
     const group = await ModifierGroup.findOneAndDelete(query);
+    const previousAssignments = group?._id
+      ? await ModifierGroupAssignment.find({ modifierGroupId: String(group._id) }).lean()
+      : [];
 
     if (group?._id) {
       await ModifierGroupAssignment.deleteMany({ modifierGroupId: String(group._id) });
     }
 
-    await rebuildStoreMenusAfterAdminChange();
+    await rebuildStoreMenusAfterAdminChange(
+      { reason: "modifier-group-delete" },
+      group,
+      previousAssignments
+    );
 
     return NextResponse.json({
       success: true,
