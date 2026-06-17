@@ -9,19 +9,34 @@ import { invalidateMenuCategories } from "@/lib/server/menu-cache";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const slugify = (value: unknown) =>
-  String(value || "")
-    .toLowerCase()
-    .trim()
-    .replace(/&/g, "and")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+type StoreConfigDoc = {
+  _id?: unknown;
+  id?: unknown;
+  categoryId?: unknown;
+  storeId?: unknown;
+  storeSlug?: unknown;
+  categoryName?: unknown;
+  categorySlug?: unknown;
+  available?: unknown;
+  isAvailable?: unknown;
+  status?: unknown;
+  sortOrder?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
 
-const isValidObjectId = (value: string) =>
-  mongoose.Types.ObjectId.isValid(value);
+const isValidObjectId = (value: string) => mongoose.Types.ObjectId.isValid(value);
 
 function cleanString(value: unknown) {
   return String(value || "").trim();
+}
+
+function slugify(value: unknown) {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function normalizeStoreId(value: unknown) {
@@ -62,6 +77,23 @@ function uniqueStrings(values: unknown[]) {
   return output;
 }
 
+function addStoreValue(value: unknown, output: unknown[]) {
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => addStoreValue(item, output));
+    return;
+  }
+
+  if (typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    addStoreValue(item.storeId || item.storeSlug || item.slug || item.id || item._id || item.name, output);
+    return;
+  }
+
+  output.push(value);
+}
+
 function extractStoreIds(body: any) {
   const rawValues = [
     body?.storeIds,
@@ -76,30 +108,12 @@ function extractStoreIds(body: any) {
   ];
 
   const values: unknown[] = [];
-
-  function add(value: unknown) {
-    if (value === null || value === undefined) return;
-
-    if (Array.isArray(value)) {
-      value.forEach(add);
-      return;
-    }
-
-    if (typeof value === "object") {
-      const item = value as Record<string, unknown>;
-      add(item.storeId || item.storeSlug || item.slug || item.id || item._id || item.name);
-      return;
-    }
-
-    values.push(value);
-  }
-
-  rawValues.forEach(add);
+  rawValues.forEach((value) => addStoreValue(value, values));
 
   return uniqueStrings(
     values
       .map(normalizeStoreId)
-      .filter((storeId) => storeId && !["all", "all-stores", "all-store"].includes(storeId))
+      .filter((storeId) => storeId && !["all", "all-store", "all-stores"].includes(storeId))
   );
 }
 
@@ -152,20 +166,20 @@ function buildCategoryPayload(body: any) {
   };
 }
 
+function getCategoryMasterId(category: any, body?: any) {
+  const cleanCategory = plainDoc(category) || {};
+  return cleanString(cleanCategory._id || cleanCategory.id || body?.categoryId || body?.id || body?._id);
+}
+
 function buildConfigPayload(category: any, body: any, storeId: string) {
   const cleanCategory = plainDoc(category) || {};
-  const categoryId = cleanString(cleanCategory._id || body?.categoryId || body?.id || body?._id);
+  const categoryId = getCategoryMasterId(cleanCategory, body);
   const categoryName = cleanString(cleanCategory.name || body?.name || body?.categoryName);
   const categorySlug = slugify(cleanCategory.slug || body?.slug || body?.categorySlug || categoryName);
   const available = body?.available !== false && body?.isAvailable !== false;
 
-  if (!categoryId) {
-    throw new Error("Category ID is required");
-  }
-
-  if (!storeId) {
-    throw new Error("Store ID is required");
-  }
+  if (!categoryId) throw new Error("Category ID is required");
+  if (!storeId) throw new Error("Store ID is required");
 
   return {
     categoryId,
@@ -179,30 +193,37 @@ function buildConfigPayload(category: any, body: any, storeId: string) {
   };
 }
 
-async function upsertStoreConfig(category: any, body: any, storeId: string) {
-  const configPayload = buildConfigPayload(category, body, storeId);
+async function upsertStoreConfigs(category: any, body: any, storeIds: string[]) {
+  const operations = storeIds.map((storeId) => {
+    const configPayload = buildConfigPayload(category, body, storeId);
 
-  return CategoryStoreConfig.findOneAndUpdate(
-    {
-      categoryId: configPayload.categoryId,
-      storeId: configPayload.storeId,
-    },
-    {
-      $set: configPayload,
-    },
-    {
-      new: true,
-      upsert: true,
-      runValidators: true,
-      setDefaultsOnInsert: true,
-    }
-  );
+    return {
+      updateOne: {
+        filter: {
+          categoryId: configPayload.categoryId,
+          storeId: configPayload.storeId,
+        },
+        update: {
+          $set: configPayload,
+          $setOnInsert: {
+            createdAt: new Date(),
+          },
+        },
+        upsert: true,
+      },
+    };
+  });
+
+  if (!operations.length) return;
+
+  await CategoryStoreConfig.bulkWrite(operations, { ordered: false });
 }
 
 async function cleanupDuplicateConfigsForCategory(category: any) {
   const cleanCategory = plainDoc(category) || {};
-  const categoryId = cleanString(cleanCategory._id);
-  const categorySlug = slugify(cleanCategory.slug || cleanCategory.name);
+  const categoryId = cleanString(cleanCategory._id || cleanCategory.id);
+  const categoryName = cleanString(cleanCategory.name);
+  const categorySlug = slugify(cleanCategory.slug || categoryName);
 
   const orQuery: any[] = [];
   if (categoryId) orQuery.push(categoryIdMatch(categoryId));
@@ -245,41 +266,48 @@ async function cleanupDuplicateConfigsForCategory(category: any) {
         $set: {
           categoryId,
           storeId,
-          categoryName: cleanString(config.categoryName || cleanCategory.name),
+          categoryName: cleanString(config.categoryName || categoryName),
           categorySlug,
+          available: config.available !== false && config.isAvailable !== false,
+          isAvailable: config.available !== false && config.isAvailable !== false,
+          status: cleanStatus(config.status),
+          sortOrder: cleanNumber(config.sortOrder, cleanCategory.sortOrder || 0),
+          updatedAt: new Date(),
         },
       }
     );
   }
 }
 
-function formatStoreConfig(config: any) {
+function formatStoreConfig(config: StoreConfigDoc) {
   const cleanConfig = plainDoc(config) || {};
-  const storeId = normalizeStoreId(cleanConfig.storeId);
+  const storeId = normalizeStoreId(cleanConfig.storeId || cleanConfig.storeSlug);
+  const available = cleanConfig.available !== false && cleanConfig.isAvailable !== false;
+  const configId = cleanString(cleanConfig._id || cleanConfig.id);
 
   return {
-    _id: cleanString(cleanConfig._id),
-    id: cleanString(cleanConfig._id),
-    storeConfigId: cleanString(cleanConfig._id),
-    configId: cleanString(cleanConfig._id),
+    _id: configId,
+    id: configId,
+    storeConfigId: configId,
+    configId,
     categoryId: cleanString(cleanConfig.categoryId),
     storeId,
     storeSlug: storeId,
     categoryName: cleanString(cleanConfig.categoryName),
     categorySlug: slugify(cleanConfig.categorySlug || cleanConfig.categoryName),
-    available: cleanConfig.available !== false && cleanConfig.isAvailable !== false,
-    isAvailable: cleanConfig.available !== false && cleanConfig.isAvailable !== false,
+    available,
+    isAvailable: available,
     status: cleanStatus(cleanConfig.status),
     sortOrder: cleanNumber(cleanConfig.sortOrder, 0),
   };
 }
 
-function formatCategoryWithConfigs(category: any, configs: any[] = []) {
+function formatCategoryWithConfigs(category: any, configs: StoreConfigDoc[] = []) {
   const cleanCategory = plainDoc(category) || {};
   const cleanConfigs = configs.map(formatStoreConfig).filter((config) => config.storeId);
   const firstConfig = cleanConfigs[0] || null;
 
-  const categoryId = cleanString(cleanCategory._id || firstConfig?.categoryId);
+  const categoryId = cleanString(cleanCategory._id || cleanCategory.id || firstConfig?.categoryId);
   const name = cleanString(cleanCategory.name || firstConfig?.categoryName);
   const slug = slugify(cleanCategory.slug || firstConfig?.categorySlug || name);
   const storeIds = uniqueStrings(cleanConfigs.map((config) => config.storeId));
@@ -297,7 +325,7 @@ function formatCategoryWithConfigs(category: any, configs: any[] = []) {
     status: cleanStatus(cleanCategory.status || firstConfig?.status),
     sortOrder: cleanNumber(cleanCategory.sortOrder ?? firstConfig?.sortOrder, 0),
 
-    // Compatibility keys for old admin UI fields.
+    // Old UI compatibility fields. Do not treat storeId as the only source.
     storeId: firstConfig?.storeId || "",
     storeSlug: firstConfig?.storeId || "",
     storeIds,
@@ -340,7 +368,7 @@ async function getCategoryRows(storeId?: string | null) {
 
   const configs = await CategoryStoreConfig.find(configQuery)
     .sort({ sortOrder: 1, createdAt: 1 })
-    .lean<any[]>();
+    .lean<StoreConfigDoc[]>();
 
   if (!configs.length) return [];
 
@@ -358,7 +386,7 @@ async function getCategoryRows(storeId?: string | null) {
     categoriesById.set(cleanString(category._id), category);
   });
 
-  const groupedByCategory = new Map<string, { category: any; configs: any[] }>();
+  const groupedByCategory = new Map<string, { category: any; configs: StoreConfigDoc[] }>();
 
   configs.forEach((config: any) => {
     const categoryId = cleanString(config.categoryId);
@@ -392,29 +420,24 @@ async function getCategoryRows(storeId?: string | null) {
 }
 
 function getErrorMessage(error: any) {
-  if (error?.code === 11000) {
-    return "Category already exists for this store.";
-  }
+  if (error?.code === 11000) return "Category already exists for this store.";
 
   if (error?.name === "ValidationError") {
     const messages = Object.values(error.errors || {})
       .map((item: any) => item?.message)
       .filter(Boolean);
 
-    return messages.length > 0
-      ? messages.join(", ")
-      : "Category validation failed.";
+    return messages.length > 0 ? messages.join(", ") : "Category validation failed.";
   }
 
   if (error?.message) return error.message;
-
   return "Something went wrong.";
 }
 
 function invalidateCategoryCache() {
   invalidateMenuCategories();
-revalidateTag("store-menu-categories", "max");
-revalidateTag("store-menu", "max");
+  revalidateTag("store-menu-categories", "max");
+  revalidateTag("store-menu", "max");
 }
 
 export async function GET(req: Request) {
@@ -425,18 +448,12 @@ export async function GET(req: Request) {
 
     const data = await getCategoryRows(storeId);
 
-    return NextResponse.json({
-      success: true,
-      data,
-    });
+    return NextResponse.json({ success: true, data });
   } catch (error: any) {
     console.error("GET CATEGORIES ERROR:", error);
 
     return NextResponse.json(
-      {
-        success: false,
-        message: getErrorMessage(error) || "Failed to fetch categories",
-      },
+      { success: false, message: getErrorMessage(error) || "Failed to fetch categories" },
       { status: 500 }
     );
   }
@@ -470,38 +487,30 @@ export async function POST(req: Request) {
           image: categoryPayload.image,
           status: categoryPayload.status,
           sortOrder: categoryPayload.sortOrder,
+          storeId: "",
         },
         { new: true, runValidators: true }
       );
     }
 
-    const configs = await Promise.all(
-      storeIds.map((storeId) => upsertStoreConfig(category, body, storeId))
-    );
-
+    await upsertStoreConfigs(category, body, storeIds);
     await cleanupDuplicateConfigsForCategory(category);
 
     const freshConfigs = await CategoryStoreConfig.find(categoryIdMatch(String(category._id)))
       .sort({ storeId: 1, sortOrder: 1 })
-      .lean<any[]>();
+      .lean<StoreConfigDoc[]>();
 
     invalidateCategoryCache();
 
     return NextResponse.json(
-      {
-        success: true,
-        data: formatCategoryWithConfigs(category, freshConfigs.length ? freshConfigs : configs),
-      },
+      { success: true, data: formatCategoryWithConfigs(category, freshConfigs) },
       { status: 201 }
     );
   } catch (error: any) {
     console.error("POST CATEGORY ERROR:", error);
 
     return NextResponse.json(
-      {
-        success: false,
-        message: getErrorMessage(error) || "Failed to create category",
-      },
+      { success: false, message: getErrorMessage(error) || "Failed to create category" },
       { status: error?.code === 11000 ? 409 : 400 }
     );
   }
@@ -536,11 +545,8 @@ export async function PATCH(req: Request) {
 
     const category = await Category.findByIdAndUpdate(
       categoryId,
-      categoryPayload,
-      {
-        new: true,
-        runValidators: true,
-      }
+      { ...categoryPayload, storeId: "" },
+      { new: true, runValidators: true }
     );
 
     if (!category) {
@@ -554,9 +560,7 @@ export async function PATCH(req: Request) {
       if (!storeIds.length) {
         await CategoryStoreConfig.deleteMany(categoryIdMatch(categoryId));
       } else {
-        await Promise.all(
-          storeIds.map((storeId) => upsertStoreConfig(category, body, storeId))
-        );
+        await upsertStoreConfigs(category, body, storeIds);
 
         await CategoryStoreConfig.deleteMany({
           ...categoryIdMatch(categoryId),
@@ -569,22 +573,16 @@ export async function PATCH(req: Request) {
 
     const freshConfigs = await CategoryStoreConfig.find(categoryIdMatch(categoryId))
       .sort({ storeId: 1, sortOrder: 1 })
-      .lean<any[]>();
+      .lean<StoreConfigDoc[]>();
 
     invalidateCategoryCache();
 
-    return NextResponse.json({
-      success: true,
-      data: formatCategoryWithConfigs(category, freshConfigs),
-    });
+    return NextResponse.json({ success: true, data: formatCategoryWithConfigs(category, freshConfigs) });
   } catch (error: any) {
     console.error("PATCH CATEGORY ERROR:", error);
 
     return NextResponse.json(
-      {
-        success: false,
-        message: getErrorMessage(error) || "Failed to update category",
-      },
+      { success: false, message: getErrorMessage(error) || "Failed to update category" },
       { status: error?.code === 11000 ? 409 : 400 }
     );
   }
@@ -612,10 +610,7 @@ export async function DELETE(req: Request) {
       await CategoryStoreConfig.deleteOne({ _id: config._id });
       invalidateCategoryCache();
 
-      return NextResponse.json({
-        success: true,
-        message: "Category removed from this store successfully",
-      });
+      return NextResponse.json({ success: true, message: "Category removed from this store successfully" });
     }
 
     if (!id || !isValidObjectId(id)) {
@@ -642,10 +637,7 @@ export async function DELETE(req: Request) {
 
       invalidateCategoryCache();
 
-      return NextResponse.json({
-        success: true,
-        message: "Category removed from this store successfully",
-      });
+      return NextResponse.json({ success: true, message: "Category removed from this store successfully" });
     }
 
     await CategoryStoreConfig.deleteMany(categoryIdMatch(String(category._id)));
@@ -653,18 +645,12 @@ export async function DELETE(req: Request) {
 
     invalidateCategoryCache();
 
-    return NextResponse.json({
-      success: true,
-      message: "Category deleted successfully",
-    });
+    return NextResponse.json({ success: true, message: "Category deleted successfully" });
   } catch (error: any) {
     console.error("DELETE CATEGORY ERROR:", error);
 
     return NextResponse.json(
-      {
-        success: false,
-        message: getErrorMessage(error) || "Failed to delete category",
-      },
+      { success: false, message: getErrorMessage(error) || "Failed to delete category" },
       { status: 500 }
     );
   }

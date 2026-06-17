@@ -45,7 +45,7 @@ const CategorySchema = new Schema(
       trim: true,
     },
 
-    // Legacy only. New store-wise category assignment must live in CategoryStoreConfig.
+    // Legacy only. New store-wise assignment lives in CategoryStoreConfig.
     storeId: {
       type: String,
       default: "",
@@ -97,16 +97,15 @@ CategorySchema.pre("validate", function () {
   }
 });
 
-CategorySchema.index({ slug: 1 });
-CategorySchema.index({ name: 1 });
-CategorySchema.index({ status: 1, sortOrder: 1 });
-CategorySchema.index({ status: 1, slug: 1 });
+CategorySchema.index({ slug: 1 }, { name: "slug_lookup" });
+CategorySchema.index({ name: 1 }, { name: "name_lookup" });
+CategorySchema.index({ status: 1, sortOrder: 1 }, { name: "status_sort" });
+CategorySchema.index({ status: 1, slug: 1 }, { name: "status_slug" });
 
 if (process.env.NODE_ENV === "development" && mongoose.models.Category) {
   delete mongoose.models.Category;
 }
 
-const Category =
-  mongoose.models.Category || mongoose.model("Category", CategorySchema);
+const Category = mongoose.models.Category || mongoose.model("Category", CategorySchema);
 
 export default Category;

@@ -8,17 +8,15 @@ import { invalidateMenuCategories } from "@/lib/server/menu-cache";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const isValidObjectId = (value: string) =>
-  mongoose.Types.ObjectId.isValid(value);
+const isValidObjectId = (value: string) => mongoose.Types.ObjectId.isValid(value);
 
 function cleanString(value: unknown) {
   return String(value || "").trim();
 }
 
 function slugify(value: unknown) {
-  return String(value || "")
+  return cleanString(value)
     .toLowerCase()
-    .trim()
     .replace(/&/g, "and")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
@@ -41,6 +39,59 @@ function cleanStatus(value: unknown) {
   return "Active";
 }
 
+function uniqueStrings(values: unknown[]) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  values.forEach((value) => {
+    const clean = cleanString(value);
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    output.push(clean);
+  });
+
+  return output;
+}
+
+function addStoreValue(value: unknown, output: unknown[]) {
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => addStoreValue(item, output));
+    return;
+  }
+
+  if (typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    addStoreValue(item.storeId || item.storeSlug || item.slug || item.id || item._id || item.name, output);
+    return;
+  }
+
+  output.push(value);
+}
+
+function extractStoreIds(body: any) {
+  const values: unknown[] = [];
+
+  [
+    body?.storeIds,
+    body?.storeSlugs,
+    body?.stores,
+    body?.selectedStores,
+    body?.selectedStoreIds,
+    body?.selectedStoreSlugs,
+    body?.storeId,
+    body?.storeSlug,
+    body?.store,
+  ].forEach((value) => addStoreValue(value, values));
+
+  return uniqueStrings(
+    values
+      .map(normalizeStoreId)
+      .filter((storeId) => storeId && !["all", "all-store", "all-stores"].includes(storeId))
+  );
+}
+
 function categoryIdValues(categoryId: unknown) {
   const cleanCategoryId = cleanString(categoryId);
   const values: any[] = [];
@@ -58,21 +109,23 @@ function categoryIdMatch(categoryId: unknown) {
   return values.length ? { categoryId: { $in: values } } : { categoryId: "" };
 }
 
-function buildConfigPayload(body: any) {
-  const categoryId = cleanString(body.categoryId);
-  const storeId = normalizeStoreId(body.storeId || body.storeSlug || body.store);
+function buildConfigPayload(body: any, storeId: string) {
+  const categoryId = cleanString(body.categoryId || body.id || body._id);
+  const cleanStoreId = normalizeStoreId(storeId || body.storeId || body.storeSlug || body.store);
 
-  if (!categoryId || !storeId) {
+  if (!categoryId || !cleanStoreId) {
     throw new Error("categoryId and storeId are required");
   }
 
+  const categoryName = cleanString(body.categoryName || body.name || body.title);
+  const categorySlug = slugify(body.categorySlug || body.slug || categoryName);
   const available = body.available !== false && body.isAvailable !== false;
 
   return {
     categoryId,
-    storeId,
-    categoryName: cleanString(body.categoryName || body.name || body.title),
-    categorySlug: slugify(body.categorySlug || body.slug || body.categoryName || body.name),
+    storeId: cleanStoreId,
+    categoryName,
+    categorySlug,
     available,
     isAvailable: available,
     status: cleanStatus(body.status),
@@ -80,10 +133,7 @@ function buildConfigPayload(body: any) {
   };
 }
 
-async function cleanupDuplicateCategoryStoreConfigs(
-  categoryId: string,
-  categorySlug?: string
-) {
+async function cleanupDuplicateCategoryStoreConfigs(categoryId: string, categorySlug?: string) {
   const cleanCategoryId = cleanString(categoryId);
   const cleanCategorySlug = slugify(categorySlug);
   const orQuery: any[] = [];
@@ -129,7 +179,11 @@ async function cleanupDuplicateCategoryStoreConfigs(
           categoryId: cleanCategoryId,
           storeId,
           categorySlug: cleanCategorySlug || slugify(doc.categorySlug || doc.categoryName),
+          available: doc.available !== false && doc.isAvailable !== false,
           isAvailable: doc.available !== false && doc.isAvailable !== false,
+          status: cleanStatus(doc.status),
+          sortOrder: cleanNumber(doc.sortOrder),
+          updatedAt: new Date(),
         },
       }
     );
@@ -138,8 +192,8 @@ async function cleanupDuplicateCategoryStoreConfigs(
 
 function invalidateCategoryCache() {
   invalidateMenuCategories();
- revalidateTag("store-menu-categories", "max");
-revalidateTag("store-menu", "max");
+  revalidateTag("store-menu-categories", "max");
+  revalidateTag("store-menu", "max");
 }
 
 function getErrorMessage(error: any) {
@@ -180,18 +234,42 @@ export async function POST(req: Request) {
   try {
     await connectDB();
     const body = await req.json();
-    const payload = buildConfigPayload(body);
+    const storeIds = extractStoreIds(body);
 
-    const config = await CategoryStoreConfig.findOneAndUpdate(
-      { categoryId: payload.categoryId, storeId: payload.storeId },
-      { $set: payload },
-      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
-    );
+    if (!storeIds.length) {
+      return NextResponse.json(
+        { success: false, message: "At least one store is required" },
+        { status: 400 }
+      );
+    }
 
-    await cleanupDuplicateCategoryStoreConfigs(payload.categoryId, payload.categorySlug);
+    const operations = storeIds.map((storeId) => {
+      const payload = buildConfigPayload(body, storeId);
+
+      return {
+        updateOne: {
+          filter: { categoryId: payload.categoryId, storeId: payload.storeId },
+          update: {
+            $set: payload,
+            $setOnInsert: { createdAt: new Date() },
+          },
+          upsert: true,
+        },
+      };
+    });
+
+    await CategoryStoreConfig.bulkWrite(operations, { ordered: false });
+
+    const firstPayload = buildConfigPayload(body, storeIds[0]);
+    await cleanupDuplicateCategoryStoreConfigs(firstPayload.categoryId, firstPayload.categorySlug);
+
+    const configs = await CategoryStoreConfig.find(categoryIdMatch(firstPayload.categoryId))
+      .sort({ storeId: 1, sortOrder: 1 })
+      .lean<any[]>();
+
     invalidateCategoryCache();
 
-    return NextResponse.json({ success: true, data: config }, { status: 201 });
+    return NextResponse.json({ success: true, data: configs }, { status: 201 });
   } catch (error: any) {
     console.error("POST CATEGORY STORE CONFIG ERROR:", error);
     return NextResponse.json(

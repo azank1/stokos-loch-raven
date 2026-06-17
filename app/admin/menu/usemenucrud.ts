@@ -344,7 +344,7 @@ function normalizeStoreValue(value: unknown) {
   if (!value) return "";
 
   if (typeof value === "string" || typeof value === "number") {
-    return String(value).trim();
+    return slugifyValue(String(value || ""));
   }
 
   if (typeof value === "object") {
@@ -355,7 +355,7 @@ function normalizeStoreValue(value: unknown) {
       name?: string;
     };
 
-    return String(obj.slug || obj._id || obj.id || obj.name || "").trim();
+    return slugifyValue(String(obj.slug || obj._id || obj.id || obj.name || ""));
   }
 
   return "";
@@ -1612,25 +1612,38 @@ export function useMenuCrud() {
       throw new Error("Missing category ID for delete");
     }
 
+    const matchedCategory = categories.find((item: any) => {
+      const itemIds = [
+        item._id,
+        item.id,
+        item.categoryId,
+        item.storeConfigId,
+        item.configId,
+        getMongoId(item),
+        ...safeArray<string>(item.storeConfigIds),
+        ...safeArray<string>(item.configIds),
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+      return itemIds.includes(cleanId);
+    });
+
+    const masterCategoryId = getCategoryMasterId(matchedCategory || { id: cleanId });
+
+    if (!masterCategoryId) {
+      throw new Error("Missing master category ID for delete");
+    }
+
     setCategories((prev) =>
       prev.filter((item: any) => {
-        const itemIds = [
-          item.storeConfigId,
-          item.configId,
-          getMongoId(item),
-          item._id,
-          item.id,
-          item.categoryId,
-        ]
-          .map((value) => String(value || "").trim())
-          .filter(Boolean);
-
-        return !itemIds.includes(cleanId);
+        const itemMasterId = getCategoryMasterId(item);
+        return itemMasterId !== masterCategoryId && !sameCategoryRow(item, matchedCategory);
       })
     );
 
     try {
-      await apiDelete("categories", cleanId);
+      await apiDelete("categories", masterCategoryId);
     } catch (error) {
       setCategories(oldCategories);
       throw error;

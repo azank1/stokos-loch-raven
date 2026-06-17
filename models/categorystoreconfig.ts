@@ -24,11 +24,13 @@ function cleanNumber(value: unknown) {
 
 const CategoryStoreConfigSchema = new Schema(
   {
+    // Always store master Category _id as a string.
     categoryId: {
       type: String,
       required: true,
       trim: true,
     },
+    // Always store normalized slug: towson / liberty / york.
     storeId: {
       type: String,
       required: true,
@@ -77,26 +79,38 @@ CategoryStoreConfigSchema.pre("validate", function () {
   doc.storeId = normalizeStoreId(doc.storeId);
   doc.categoryName = cleanString(doc.categoryName);
   doc.categorySlug = slugify(doc.categorySlug || doc.categoryName);
-  doc.available = doc.available !== false && doc.isAvailable !== false;
-  doc.isAvailable = doc.available;
+
+  const available = doc.available !== false && doc.isAvailable !== false;
+  doc.available = available;
+  doc.isAvailable = available;
+
   doc.sortOrder = cleanNumber(doc.sortOrder);
 });
 
+// Correct unique rule: one config per category per store.
+// If MongoDB has old unique indexes on only categoryId/categorySlug, run scripts/mongodb-indexes.js.
 CategoryStoreConfigSchema.index(
   { categoryId: 1, storeId: 1 },
   { unique: true, name: "unique_category_store_config" }
 );
-CategoryStoreConfigSchema.index({ storeId: 1, status: 1, sortOrder: 1 });
-CategoryStoreConfigSchema.index({ storeId: 1, status: 1, available: 1, sortOrder: 1 });
-CategoryStoreConfigSchema.index({ storeId: 1, status: 1, isAvailable: 1, sortOrder: 1 });
-CategoryStoreConfigSchema.index({ storeId: 1, status: 1, categorySlug: 1, sortOrder: 1 });
-CategoryStoreConfigSchema.index({ categoryId: 1 });
-CategoryStoreConfigSchema.index({ categorySlug: 1, storeId: 1 });
 
-if (
-  process.env.NODE_ENV === "development" &&
-  mongoose.models.CategoryStoreConfig
-) {
+CategoryStoreConfigSchema.index({ storeId: 1, status: 1, sortOrder: 1 }, { name: "store_status_sort" });
+CategoryStoreConfigSchema.index(
+  { storeId: 1, status: 1, available: 1, sortOrder: 1 },
+  { name: "store_status_available_sort" }
+);
+CategoryStoreConfigSchema.index(
+  { storeId: 1, status: 1, isAvailable: 1, sortOrder: 1 },
+  { name: "store_status_isAvailable_sort" }
+);
+CategoryStoreConfigSchema.index(
+  { storeId: 1, status: 1, categorySlug: 1, sortOrder: 1 },
+  { name: "store_status_categorySlug_sort" }
+);
+CategoryStoreConfigSchema.index({ categoryId: 1 }, { name: "categoryId_lookup" });
+CategoryStoreConfigSchema.index({ categorySlug: 1, storeId: 1 }, { name: "categorySlug_store_lookup" });
+
+if (process.env.NODE_ENV === "development" && mongoose.models.CategoryStoreConfig) {
   delete mongoose.models.CategoryStoreConfig;
 }
 
