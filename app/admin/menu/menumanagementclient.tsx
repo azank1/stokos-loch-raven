@@ -244,6 +244,22 @@ export default function MenuManagementClient() {
     return dedupeCategoriesForFilter(visibleCategories);
   }, [visibleCategories]);
 
+  const modalSelectedStoreIds = useMemo(() => {
+    const allStoreIds = getUniqueStoreIds(getAllStoreIds(stores));
+
+    if (selectedStoreFilter === "all") {
+      return allStoreIds;
+    }
+
+    const selectedStoreId = normalizeStoreValue(selectedStoreFilter);
+
+    if (selectedStoreId && selectedStoreId !== "all") {
+      return [selectedStoreId];
+    }
+
+    return allStoreIds;
+  }, [selectedStoreFilter, stores]);
+
   const openAdd = (type: TabType) => {
     setActiveTab(type);
 
@@ -708,6 +724,7 @@ export default function MenuManagementClient() {
   modifierGroups={modifierGroups}
   upsellRules={upsellRules}
   selectedStoreId={selectedStoreFilter}
+  selectedStoreIds={modal.type === "categories" ? modalSelectedStoreIds : []}
   onClose={() => setModal(null)}
   onSave={handleSave}
 />
@@ -896,10 +913,10 @@ function buildCategorySavePayload(
 
   let targetStoreIds: string[] = [];
 
-  if (selectedStoreId && selectedStoreId !== "all") {
-    targetStoreIds = [selectedStoreId];
-  } else if (currentStoreIds.length) {
+  if (currentStoreIds.length) {
     targetStoreIds = currentStoreIds;
+  } else if (selectedStoreId && selectedStoreId !== "all") {
+    targetStoreIds = [selectedStoreId];
   } else if (allStoreIds.length) {
     targetStoreIds = allStoreIds;
   } else if (directStoreId && directStoreId !== "all") {

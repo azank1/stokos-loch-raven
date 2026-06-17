@@ -34,6 +34,7 @@ type StoreItem = {
 
 type CategorySaveValue = Category & {
   storeIds?: string[];
+  stores?: string[];
 };
 
 type SaveValue = Product | CategorySaveValue | ModifierGroup | UpsellRule;
@@ -47,6 +48,7 @@ export default function MenuModal({
   modifierGroups,
   upsellRules = [],
   selectedStoreId: selectedStoreIdFromParent = "",
+  selectedStoreIds: selectedStoreIdsFromParent = [],
   onClose,
   onSave,
 }: {
@@ -58,9 +60,10 @@ export default function MenuModal({
   modifierGroups: ModifierGroup[];
   upsellRules?: UpsellRule[];
   selectedStoreId?: string;
+  selectedStoreIds?: string[];
   onClose: () => void;
   onSave: (value: SaveValue) => void;
-})  {
+}) {
   const productRef = useRef<ProductFormRef>(null);
   const categoryRef = useRef<CategoryFormRef>(null);
   const modifierRef = useRef<ModifierGroupFormRef>(null);
@@ -69,15 +72,12 @@ export default function MenuModal({
   const isEdit = Boolean(item);
   const label = getMenuModalLabel(type);
 
-  const isProduct = type === "products";
   const isCategory = type === "categories";
   const isModifier = type === "modifiers";
   const isUpsell = type === "upsells";
   const isCategoryAdd = isCategory && !isEdit;
   const isCategoryEdit = isCategory && isEdit;
 
-  // Products, modifiers, and upsells handle store logic inside their own forms.
-  // Only category add/edit needs this top store box.
   const showTopStoreBox = isCategory;
 
   const storeOptions = useMemo(() => {
@@ -97,21 +97,47 @@ export default function MenuModal({
     return getItemStoreId(item);
   }, [item]);
 
+  const parentSelectedStoreIds = useMemo(() => {
+    const allStoreIds = storeOptions.map((store) => store.value);
+    const cleanParentStore = String(selectedStoreIdFromParent || "").trim();
+
+    if (isAllStoresValue(cleanParentStore)) return allStoreIds;
+
+    const fromArray = Array.from(
+      new Set(
+        selectedStoreIdsFromParent
+          .map((storeId) => String(storeId || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    if (fromArray.length > 0) return fromArray;
+    if (cleanParentStore) return [cleanParentStore];
+
+    return allStoreIds;
+  }, [selectedStoreIdFromParent, selectedStoreIdsFromParent, storeOptions]);
+
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
 
   useEffect(() => {
-    const nextSingleStore = itemStoreId || firstStoreId || "";
+    const nextSingleStore =
+      itemStoreId || parentSelectedStoreIds[0] || firstStoreId || "";
 
     setSelectedStoreId(nextSingleStore);
 
     if (isCategoryAdd) {
-      setSelectedStoreIds(storeOptions.map((store) => store.value));
+      setSelectedStoreIds(parentSelectedStoreIds);
       return;
     }
 
     setSelectedStoreIds(nextSingleStore ? [nextSingleStore] : []);
-  }, [itemStoreId, firstStoreId, storeOptions, isCategoryAdd]);
+  }, [
+    itemStoreId,
+    firstStoreId,
+    parentSelectedStoreIds,
+    isCategoryAdd,
+  ]);
 
   const activeFormStoreId = useMemo(() => {
     if (isCategoryAdd) {
@@ -154,13 +180,13 @@ export default function MenuModal({
     return dedupeCategoriesForSelect(filtered);
   }, [categories, activeFormStoreId, selectedStoreId, storeOptions]);
 
-const selectedStoreProducts = useMemo(() => {
-  if (!selectedStoreId) return [];
+  const selectedStoreProducts = useMemo(() => {
+    if (!selectedStoreId) return [];
 
-  return products.filter((product) => {
-    return isItemInSelectedStore(product, selectedStoreId, storeOptions);
-  });
-}, [products, selectedStoreId, storeOptions]);
+    return products.filter((product) => {
+      return isItemInSelectedStore(product, selectedStoreId, storeOptions);
+    });
+  }, [products, selectedStoreId, storeOptions]);
 
   const selectedStoreModifierGroups = useMemo(() => {
     if (!selectedStoreId) return [];
@@ -213,8 +239,9 @@ const selectedStoreProducts = useMemo(() => {
 
       const payload: CategorySaveValue = {
         ...categoryValue,
-        storeId: categoryValue.storeId || selectedStoreIds[0],
+        storeId: selectedStoreIds[0],
         storeIds: selectedStoreIds,
+        stores: selectedStoreIds,
       };
 
       onSave(payload);
@@ -232,9 +259,10 @@ const selectedStoreProducts = useMemo(() => {
       const payload = {
         ...(value as object),
         storeId: lockedStoreId,
-      } as Category & { storeIds?: string[] };
+      } as Category & { storeIds?: string[]; stores?: string[] };
 
       delete payload.storeIds;
+      delete payload.stores;
 
       onSave(payload);
       return;
@@ -385,22 +413,6 @@ const selectedStoreProducts = useMemo(() => {
             </div>
           )}
 
-          {!isCategory && (
-            <select
-              value={selectedStoreId}
-              onChange={(event) => setSelectedStoreId(event.target.value)}
-              className="h-12 w-full rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-bold text-zinc-900 outline-none transition focus:border-green-700"
-            >
-              <option value="">Select Store</option>
-
-              {storeOptions.map((store) => (
-                <option key={store.value} value={store.value}>
-                  {store.name}
-                </option>
-              ))}
-            </select>
-          )}
-
           {stores.length === 0 && (
             <p className="mt-2 text-xs font-bold text-red-600">
               No stores found. Please add store first.
@@ -425,11 +437,12 @@ const selectedStoreProducts = useMemo(() => {
 
       {type === "categories" && (
         <CategoryForm
-          key={`category-form-${activeFormStoreId}-${getSafeId(item) || "new"}`}
+          key={`category-form-${activeFormStoreId}-${selectedStoreIds.join("-")}-${getSafeId(item) || "new"}`}
           ref={categoryRef}
           item={item as Category | null}
           categories={selectedStoreCategories}
           selectedStoreId={activeFormStoreId}
+          selectedStoreIds={isCategoryAdd ? selectedStoreIds : [activeFormStoreId]}
           onSave={handleFormSave}
         />
       )}
@@ -522,6 +535,12 @@ function normalizeStoreValue(value: unknown) {
   return "";
 }
 
+function isAllStoresValue(value: unknown) {
+  const clean = String(value || "").trim().toLowerCase();
+
+  return ["all", "all-stores", "all_store", "*"].includes(clean);
+}
+
 function isSameStore(store: StoreItem, value: string) {
   const cleanValue = String(value || "").trim();
 
@@ -580,16 +599,11 @@ function isItemInSelectedStore(
     storeConfigs?: Array<{
       storeId?: unknown;
       available?: boolean;
-      status?: "Active" | "Paused" | "Inactive";
+      isAvailable?: boolean;
+      status?: "Active" | "Paused" | "Inactive" | "Hidden";
     }>;
   };
 
-  /*
-    Important:
-    ModifierGroups are now global.
-    If assignments exist, assignments are the source of truth.
-    Old modifier.storeId can still be "towson", so do not check storeId first.
-  */
   if (Array.isArray(obj.assignments) && obj.assignments.length > 0) {
     return obj.assignments.some((assignment) => {
       if (assignment.status === "Inactive") return false;
@@ -606,7 +620,12 @@ function isItemInSelectedStore(
 
   if (Array.isArray(obj.storeConfigs) && obj.storeConfigs.length > 0) {
     return obj.storeConfigs.some((config) => {
-      if (config.available === false || config.status === "Inactive") {
+      if (
+        config.available === false ||
+        config.isAvailable === false ||
+        config.status === "Inactive" ||
+        config.status === "Hidden"
+      ) {
         return false;
       }
 
