@@ -22,15 +22,44 @@ function cleanNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function normalizePayload(payload: any) {
+  if (!payload || typeof payload !== "object") return payload;
+
+  if ("categoryId" in payload)
+    payload.categoryId = cleanString(payload.categoryId);
+  if ("storeId" in payload) payload.storeId = normalizeStoreId(payload.storeId);
+  if ("storeSlug" in payload && !payload.storeId)
+    payload.storeId = normalizeStoreId(payload.storeSlug);
+  if ("store" in payload && !payload.storeId)
+    payload.storeId = normalizeStoreId(payload.store);
+  if ("categoryName" in payload)
+    payload.categoryName = cleanString(payload.categoryName);
+
+  payload.categorySlug = slugify(
+    payload.categorySlug || payload.slug || payload.categoryName,
+  );
+
+  const available =
+    payload.available !== false && payload.isAvailable !== false;
+  payload.available = available;
+  payload.isAvailable = available;
+
+  payload.sortOrder = cleanNumber(payload.sortOrder);
+
+  if (!["Active", "Hidden", "Inactive"].includes(cleanString(payload.status))) {
+    payload.status = "Active";
+  }
+
+  return payload;
+}
+
 const CategoryStoreConfigSchema = new Schema(
   {
-    // Always store master Category _id as a string.
     categoryId: {
       type: String,
       required: true,
       trim: true,
     },
-    // Always store normalized slug: towson / liberty / york.
     storeId: {
       type: String,
       required: true,
@@ -69,48 +98,71 @@ const CategoryStoreConfigSchema = new Schema(
   {
     timestamps: true,
     collection: "categorystoreconfigs",
-  }
+  },
 );
 
 CategoryStoreConfigSchema.pre("validate", function () {
-  const doc = this as any;
+  normalizePayload(this as any, true);
+});
 
-  doc.categoryId = cleanString(doc.categoryId);
-  doc.storeId = normalizeStoreId(doc.storeId);
-  doc.categoryName = cleanString(doc.categoryName);
-  doc.categorySlug = slugify(doc.categorySlug || doc.categoryName);
+CategoryStoreConfigSchema.pre("findOneAndUpdate", function () {
+  const update: any = this.getUpdate() || {};
+  const setPayload = update.$set || update;
 
-  const available = doc.available !== false && doc.isAvailable !== false;
-  doc.available = available;
-  doc.isAvailable = available;
+  normalizePayload(setPayload);
 
-  doc.sortOrder = cleanNumber(doc.sortOrder);
+  if (update.$set) {
+    update.$set = setPayload;
+    this.setUpdate(update);
+  } else {
+    this.setUpdate(setPayload);
+  }
+});
+
+CategoryStoreConfigSchema.pre("updateOne", function () {
+  const update: any = this.getUpdate() || {};
+  if (update.$set) normalizePayload(update.$set);
+  this.setUpdate(update);
+});
+
+CategoryStoreConfigSchema.pre("updateMany", function () {
+  const update: any = this.getUpdate() || {};
+  if (update.$set) normalizePayload(update.$set);
+  this.setUpdate(update);
 });
 
 // Correct unique rule: one config per category per store.
-// If MongoDB has old unique indexes on only categoryId/categorySlug, run scripts/mongodb-indexes.js.
+// Important: old wrong unique indexes must be dropped by scripts/mongodb-indexes.js.
 CategoryStoreConfigSchema.index(
   { categoryId: 1, storeId: 1 },
-  { unique: true, name: "unique_category_store_config" }
+  { unique: true, name: "unique_category_store_config" },
 );
+CategoryStoreConfigSchema.index({ storeId: 1, status: 1, sortOrder: 1 });
+CategoryStoreConfigSchema.index({
+  storeId: 1,
+  status: 1,
+  available: 1,
+  sortOrder: 1,
+});
+CategoryStoreConfigSchema.index({
+  storeId: 1,
+  status: 1,
+  isAvailable: 1,
+  sortOrder: 1,
+});
+CategoryStoreConfigSchema.index({
+  storeId: 1,
+  status: 1,
+  categorySlug: 1,
+  sortOrder: 1,
+});
+CategoryStoreConfigSchema.index({ categoryId: 1 });
+CategoryStoreConfigSchema.index({ categorySlug: 1, storeId: 1 });
 
-CategoryStoreConfigSchema.index({ storeId: 1, status: 1, sortOrder: 1 }, { name: "store_status_sort" });
-CategoryStoreConfigSchema.index(
-  { storeId: 1, status: 1, available: 1, sortOrder: 1 },
-  { name: "store_status_available_sort" }
-);
-CategoryStoreConfigSchema.index(
-  { storeId: 1, status: 1, isAvailable: 1, sortOrder: 1 },
-  { name: "store_status_isAvailable_sort" }
-);
-CategoryStoreConfigSchema.index(
-  { storeId: 1, status: 1, categorySlug: 1, sortOrder: 1 },
-  { name: "store_status_categorySlug_sort" }
-);
-CategoryStoreConfigSchema.index({ categoryId: 1 }, { name: "categoryId_lookup" });
-CategoryStoreConfigSchema.index({ categorySlug: 1, storeId: 1 }, { name: "categorySlug_store_lookup" });
-
-if (process.env.NODE_ENV === "development" && mongoose.models.CategoryStoreConfig) {
+if (
+  process.env.NODE_ENV === "development" &&
+  mongoose.models.CategoryStoreConfig
+) {
   delete mongoose.models.CategoryStoreConfig;
 }
 

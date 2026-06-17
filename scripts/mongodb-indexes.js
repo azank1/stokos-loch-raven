@@ -3,12 +3,10 @@
 
   node --env-file=.env.local scripts/mongodb-indexes.js
 
-  What this script fixes:
-  1) Prints current categorystoreconfigs indexes.
-  2) Drops dangerous old unique indexes like { categoryId: 1 } or { categorySlug: 1 }.
-  3) Normalizes existing category store config rows.
-  4) Deletes duplicate rows for the same categoryId + storeId pair.
-  5) Creates the correct unique index: { categoryId: 1, storeId: 1 }.
+  This script does 3 things:
+  1) drops old/wrong UNIQUE indexes from categorystoreconfigs
+  2) dedupes exact duplicate categoryId + storeId rows
+  3) creates the correct indexes
 */
 
 const { MongoClient, ObjectId } = require("mongodb");
@@ -26,149 +24,169 @@ function cleanString(value) {
   return String(value || "").trim();
 }
 
-function cleanNumber(value) {
-  const number = Number(value || 0);
-  return Number.isFinite(number) ? number : 0;
+function sameKey(a, b) {
+  return JSON.stringify(a || {}) === JSON.stringify(b || {});
 }
 
-function cleanStatus(value) {
-  const status = cleanString(value);
-  return ["Active", "Hidden", "Inactive"].includes(status) ? status : "Active";
+function latestTime(doc) {
+  const value = new Date(doc.updatedAt || doc.createdAt || doc._id?.getTimestamp?.() || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
 }
 
-function sameKey(first, second) {
-  return JSON.stringify(first || {}) === JSON.stringify(second || {});
-}
-
-function isCorrectUniqueCategoryStoreIndex(index) {
-  return Boolean(index.unique) && sameKey(index.key, { categoryId: 1, storeId: 1 });
-}
-
-async function printIndexes(collection, label) {
+async function dropWrongUniqueIndexes(collection) {
   const indexes = await collection.indexes();
-  console.log(`\n${label}`);
+  const expectedUniqueKey = { categoryId: 1, storeId: 1 };
+
+  console.log("\nExisting categorystoreconfigs indexes:");
   indexes.forEach((index) => {
-    console.log(`- ${index.name}: ${JSON.stringify(index.key)}${index.unique ? " UNIQUE" : ""}`);
+    console.log(`- ${index.name}`, JSON.stringify(index.key), index.unique ? "UNIQUE" : "");
   });
-  return indexes;
-}
-
-async function dropDangerousCategoryStoreIndexes(collection) {
-  const indexes = await collection.indexes();
 
   for (const index of indexes) {
     if (index.name === "_id_") continue;
+    if (!index.unique) continue;
 
-    const hasCategoryFields = Object.prototype.hasOwnProperty.call(index.key || {}, "categoryId") ||
-      Object.prototype.hasOwnProperty.call(index.key || {}, "categorySlug");
+    const isExpected = sameKey(index.key, expectedUniqueKey);
 
-    const wrongNamedIndex =
-      index.name === "unique_category_store_config" && !isCorrectUniqueCategoryStoreIndex(index);
-
-    const dangerousUniqueIndex = Boolean(index.unique) && hasCategoryFields && !isCorrectUniqueCategoryStoreIndex(index);
-
-    if (!wrongNamedIndex && !dangerousUniqueIndex) continue;
-
-    console.log(`Dropping bad index: ${index.name} ${JSON.stringify(index.key)}${index.unique ? " UNIQUE" : ""}`);
-    await collection.dropIndex(index.name);
+    if (!isExpected || index.name !== "unique_category_store_config") {
+      console.log(`Dropping wrong unique index: ${index.name}`);
+      await collection.dropIndex(index.name).catch((error) => {
+        console.warn(`Could not drop ${index.name}:`, error.message);
+      });
+    }
   }
-}
-
-function normalizeConfig(doc) {
-  const categoryId = cleanString(doc.categoryId instanceof ObjectId ? doc.categoryId.toString() : doc.categoryId);
-  const storeId = slugify(doc.storeId || doc.storeSlug || doc.store || "");
-  const categoryName = cleanString(doc.categoryName || doc.name || doc.title || "");
-  const categorySlug = slugify(doc.categorySlug || doc.slug || categoryName);
-  const available = doc.available !== false && doc.isAvailable !== false;
-
-  return {
-    categoryId,
-    storeId,
-    categoryName,
-    categorySlug,
-    available,
-    isAvailable: available,
-    status: cleanStatus(doc.status),
-    sortOrder: cleanNumber(doc.sortOrder),
-  };
-}
-
-function newestFirst(a, b) {
-  const aUpdated = new Date(a.updatedAt || a.createdAt || a._id.getTimestamp()).getTime();
-  const bUpdated = new Date(b.updatedAt || b.createdAt || b._id.getTimestamp()).getTime();
-
-  if (aUpdated !== bUpdated) return bUpdated - aUpdated;
-  return String(b._id).localeCompare(String(a._id));
 }
 
 async function normalizeAndDedupeCategoryStoreConfigs(collection) {
   const docs = await collection.find({}).toArray();
-  const invalidIds = [];
-  const docsByKey = new Map();
+  const groups = new Map();
 
   for (const doc of docs) {
-    const normalized = normalizeConfig(doc);
+    const categoryId = cleanString(doc.categoryId);
+    const storeId = slugify(doc.storeId || doc.storeSlug || doc.store);
+    const categoryName = cleanString(doc.categoryName || doc.name || doc.title);
+    const categorySlug = slugify(doc.categorySlug || doc.slug || categoryName);
+    const available = doc.available !== false && doc.isAvailable !== false;
 
-    if (!normalized.categoryId || !normalized.storeId) {
-      invalidIds.push(doc._id);
+    if (!categoryId || !storeId) {
+      console.log("Deleting broken config with missing categoryId/storeId:", doc._id.toString());
+      await collection.deleteOne({ _id: doc._id });
       continue;
     }
 
-    await collection.updateOne(
-      { _id: doc._id },
-      {
-        $set: {
-          ...normalized,
-          updatedAt: new Date(),
-        },
-      }
-    );
+    const normalized = {
+      categoryId,
+      storeId,
+      categoryName,
+      categorySlug,
+      available,
+      isAvailable: available,
+      status: ["Active", "Hidden", "Inactive"].includes(cleanString(doc.status))
+        ? cleanString(doc.status)
+        : "Active",
+      sortOrder: Number.isFinite(Number(doc.sortOrder)) ? Number(doc.sortOrder) : 0,
+    };
 
-    const key = `${normalized.categoryId}::${normalized.storeId}`;
-    if (!docsByKey.has(key)) docsByKey.set(key, []);
-    docsByKey.get(key).push({ ...doc, ...normalized });
+    await collection.updateOne({ _id: doc._id }, { $set: normalized });
+
+    const key = `${categoryId}__${storeId}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ ...doc, ...normalized });
   }
 
-  const duplicateIds = [];
+  let deleted = 0;
 
-  for (const rows of docsByKey.values()) {
-    rows.sort(newestFirst);
-    duplicateIds.push(...rows.slice(1).map((doc) => doc._id));
-  }
+  for (const [, items] of groups.entries()) {
+    if (items.length <= 1) continue;
 
-  const deleteIds = [...invalidIds, ...duplicateIds];
+    items.sort((a, b) => latestTime(b) - latestTime(a));
+    const keep = items[0];
+    const remove = items.slice(1).map((item) => item._id);
 
-  if (deleteIds.length > 0) {
-    const result = await collection.deleteMany({ _id: { $in: deleteIds } });
-    console.log(`Deleted invalid/duplicate category store config rows: ${result.deletedCount}`);
-  } else {
-    console.log("No invalid/duplicate category store config rows found.");
-  }
-}
-
-async function ensureIndex(collection, key, options = {}) {
-  const indexes = await collection.indexes();
-  const existingSameName = options.name ? indexes.find((index) => index.name === options.name) : null;
-
-  if (existingSameName) {
-    const sameOptions =
-      sameKey(existingSameName.key, key) &&
-      Boolean(existingSameName.unique) === Boolean(options.unique);
-
-    if (!sameOptions) {
-      console.log(`Dropping index with changed definition: ${existingSameName.name}`);
-      await collection.dropIndex(existingSameName.name);
+    if (remove.length) {
+      await collection.deleteMany({ _id: { $in: remove } });
+      deleted += remove.length;
+      console.log(
+        `Deduped categoryId=${keep.categoryId}, storeId=${keep.storeId}; deleted ${remove.length}`
+      );
     }
   }
 
-  await collection.createIndex(key, options);
+  console.log(`Normalized categorystoreconfigs. Deleted duplicate rows: ${deleted}`);
+}
+
+async function createIndexes(db) {
+  await db.collection("stores").createIndex({ slug: 1, status: 1 });
+
+  await db.collection("productstoreconfigs").createIndex({
+    storeId: 1,
+    status: 1,
+    isAvailable: 1,
+    available: 1,
+    sortOrder: 1,
+    updatedAt: -1,
+  });
+  await db.collection("productstoreconfigs").createIndex({ storeId: 1, productId: 1, status: 1 });
+  await db.collection("productstoreconfigs").createIndex({ productId: 1 });
+
+  await db.collection("products").createIndex({ status: 1, _id: 1 });
+  await db.collection("products").createIndex({ status: 1, id: 1 });
+  await db.collection("products").createIndex({ status: 1, slug: 1 });
+
+  await db.collection("categorystoreconfigs").createIndex(
+    { categoryId: 1, storeId: 1 },
+    { unique: true, name: "unique_category_store_config" }
+  );
+  await db.collection("categorystoreconfigs").createIndex({
+    storeId: 1,
+    status: 1,
+    isAvailable: 1,
+    available: 1,
+    sortOrder: 1,
+    updatedAt: -1,
+  });
+  await db.collection("categorystoreconfigs").createIndex({
+    storeId: 1,
+    status: 1,
+    categorySlug: 1,
+    sortOrder: 1,
+  });
+  await db.collection("categorystoreconfigs").createIndex({ categoryId: 1 });
+  await db.collection("categorystoreconfigs").createIndex({ categorySlug: 1, storeId: 1 });
+
+  await db.collection("categories").createIndex({ slug: 1 });
+  await db.collection("categories").createIndex({ name: 1 });
+  await db.collection("categories").createIndex({ status: 1, _id: 1 });
+  await db.collection("categories").createIndex({ status: 1, id: 1 });
+  await db.collection("categories").createIndex({ status: 1, slug: 1 });
+}
+
+async function printPopularMenuItemsCheck(db) {
+  const rows = await db
+    .collection("categorystoreconfigs")
+    .find({ categorySlug: "popular-menu-items" })
+    .project({ categoryId: 1, storeId: 1, categoryName: 1, categorySlug: 1, updatedAt: 1 })
+    .sort({ storeId: 1 })
+    .toArray();
+
+  console.log("\nCurrent popular-menu-items configs:");
+  if (!rows.length) {
+    console.log("- No rows found yet. Save the category again from admin.");
+    return;
+  }
+
+  rows.forEach((row) => {
+    console.log(`- ${row.storeId} => categoryId=${row.categoryId}`);
+  });
 }
 
 async function main() {
   const uri = process.env.MONGODB_URI;
 
   if (!uri) {
-    throw new Error("MONGODB_URI is missing. Run with: node --env-file=.env.local scripts/mongodb-indexes.js");
+    throw new Error(
+      "MONGODB_URI is missing. Run with: node --env-file=.env.local scripts/mongodb-indexes.js"
+    );
   }
 
   const client = new MongoClient(uri, {
@@ -177,60 +195,19 @@ async function main() {
   });
 
   await client.connect();
-  const db = client.db(process.env.MONGODB_DB || "stokos");
-
+  const db = client.db("stokos");
   const categoryStoreConfigs = db.collection("categorystoreconfigs");
 
-  await printIndexes(categoryStoreConfigs, "Before categorystoreconfigs indexes:");
-  await dropDangerousCategoryStoreIndexes(categoryStoreConfigs);
+  await dropWrongUniqueIndexes(categoryStoreConfigs);
   await normalizeAndDedupeCategoryStoreConfigs(categoryStoreConfigs);
+  await createIndexes(db);
+  await printPopularMenuItemsCheck(db);
 
-  await Promise.all([
-    ensureIndex(db.collection("stores"), { slug: 1, status: 1 }, { name: "slug_status" }),
-
-    ensureIndex(
-      db.collection("productstoreconfigs"),
-      { storeId: 1, status: 1, isAvailable: 1, available: 1, sortOrder: 1, updatedAt: -1 },
-      { name: "store_product_visible_sort" }
-    ),
-    ensureIndex(
-      db.collection("productstoreconfigs"),
-      { storeId: 1, productId: 1, status: 1 },
-      { name: "store_product_status" }
-    ),
-    ensureIndex(db.collection("productstoreconfigs"), { productId: 1 }, { name: "productId_lookup" }),
-
-    ensureIndex(db.collection("products"), { status: 1, _id: 1 }, { name: "status_id" }),
-    ensureIndex(db.collection("products"), { status: 1, id: 1 }, { name: "status_legacy_id" }),
-    ensureIndex(db.collection("products"), { status: 1, slug: 1 }, { name: "status_slug" }),
-
-    ensureIndex(
-      categoryStoreConfigs,
-      { categoryId: 1, storeId: 1 },
-      { unique: true, name: "unique_category_store_config" }
-    ),
-    ensureIndex(
-      categoryStoreConfigs,
-      { storeId: 1, status: 1, isAvailable: 1, available: 1, sortOrder: 1, updatedAt: -1 },
-      { name: "store_category_visible_sort" }
-    ),
-    ensureIndex(categoryStoreConfigs, { storeId: 1, status: 1, sortOrder: 1 }, { name: "store_status_sort" }),
-    ensureIndex(categoryStoreConfigs, { categoryId: 1 }, { name: "categoryId_lookup" }),
-    ensureIndex(categoryStoreConfigs, { categorySlug: 1, storeId: 1 }, { name: "categorySlug_store_lookup" }),
-
-    ensureIndex(db.collection("categories"), { status: 1, _id: 1 }, { name: "status_id" }),
-    ensureIndex(db.collection("categories"), { status: 1, id: 1 }, { name: "status_legacy_id" }),
-    ensureIndex(db.collection("categories"), { status: 1, slug: 1 }, { name: "status_slug" }),
-    ensureIndex(db.collection("categories"), { slug: 1 }, { name: "slug_lookup" }),
-  ]);
-
-  await printIndexes(categoryStoreConfigs, "After categorystoreconfigs indexes:");
-
-  console.log("\n✅ MongoDB category multi-store indexes/data verified successfully.");
+  console.log("\n✅ MongoDB indexes fixed/verified successfully.");
   await client.close();
 }
 
 main().catch((error) => {
-  console.error("❌ Failed to create MongoDB indexes:", error);
+  console.error("❌ Failed to fix MongoDB indexes:", error);
   process.exit(1);
 });
