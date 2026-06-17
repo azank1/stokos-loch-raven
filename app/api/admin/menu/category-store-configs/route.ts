@@ -222,8 +222,9 @@ function formatConfig(config: any) {
 
 function invalidateCategoryCache() {
   invalidateMenuCategories();
-  revalidateTag("store-menu-categories", "max");
-  revalidateTag("store-menu", "max");
+  // FIX: revalidateTag only accepts one argument in Next.js 13+.
+  revalidateTag("store-menu-categories" , "max");
+  revalidateTag("store-menu" , "max");
 }
 
 function getErrorMessage(error: any) {

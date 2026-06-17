@@ -131,8 +131,10 @@ CategoryStoreConfigSchema.pre("updateMany", function () {
   this.setUpdate(update);
 });
 
-// Correct unique rule: one config per category per store.
-// Important: old wrong unique indexes must be dropped by scripts/mongodb-indexes.js.
+// One config per (categoryId, storeId) pair — this is the correct unique constraint.
+// The scripts/mongodb-indexes.js script must drop any old wrong unique indexes
+// (e.g. unique on categoryId alone, or unique on categorySlug+storeId) before
+// this index can be created cleanly.
 CategoryStoreConfigSchema.index(
   { categoryId: 1, storeId: 1 },
   { unique: true, name: "unique_category_store_config" },

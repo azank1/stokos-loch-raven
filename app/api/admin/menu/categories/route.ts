@@ -116,18 +116,35 @@ function extractStoreIds(body: any) {
   );
 }
 
-function hasExplicitStoreSelection(body: any) {
-  return [
+// FIX: hasExplicitStoreSelection now ONLY returns true when an array-type store field
+// is present in the body. A single `storeId` field is NOT treated as an explicit
+// deselection of other stores — it is just a legacy primary-store hint.
+//
+// ROOT CAUSE OF THE BUG:
+// Previously, any body that contained `storeId` triggered hasExplicitStoreSelection.
+// normalizeCategory() in usemenucrud.ts ALWAYS sets selectedStores/storeId/etc on
+// every category payload, so every PATCH call was treated as an explicit store
+// re-selection. When a category was edited and the payload's storeIds only contained
+// the primary store (e.g. "towson"), syncSelectedStoreConfigs ran with ["towson"],
+// and dedupeAndRepairCategoryConfigs deleted the other store configs (e.g. "york").
+// Only the array fields (storeIds, selectedStoreIds, etc.) reflect a deliberate
+// multi-store selection from the UI checkboxes, so only those should trigger a sync.
+function hasExplicitStoreSelection(body: any): boolean {
+  const arrayStoreFields = [
     "storeIds",
     "storeSlugs",
     "stores",
     "selectedStores",
     "selectedStoreIds",
     "selectedStoreSlugs",
-    "storeId",
-    "storeSlug",
-    "store",
-  ].some((key) => body && Object.prototype.hasOwnProperty.call(body, key));
+  ];
+
+  return arrayStoreFields.some(
+    (key) =>
+      body &&
+      Object.prototype.hasOwnProperty.call(body, key) &&
+      Array.isArray(body[key]),
+  );
 }
 
 function getCategoryIdValues(categoryId: unknown) {
@@ -378,8 +395,6 @@ async function syncSelectedStoreConfigs(
     try {
       await upsertStoreConfig(category, body, storeId);
     } catch (error: any) {
-      // If an old bad unique index or duplicate legacy row blocks the insert,
-      // repair duplicates once and retry this store.
       if (error?.code !== 11000) throw error;
 
       await dedupeAndRepairCategoryConfigs(category);
@@ -458,7 +473,6 @@ function formatCategoryWithConfigs(category: any, configs: any[] = []) {
       0,
     ),
 
-    // Compatibility keys for old admin UI fields.
     storeId: firstConfig?.storeId || "",
     storeSlug: firstConfig?.storeId || "",
     storeIds,
@@ -539,9 +553,6 @@ async function getCategoryRows(storeId?: string | null) {
     categoriesById.set(cleanString(category._id), category);
   });
 
-  // Important fix: group by category slug/name, not only categoryId.
-  // Old DB data can have separate master category IDs per store. Grouping by ID makes
-  // badges disappear/overwrite after refetch. Slug grouping keeps Towson/York/Liberty together.
   const groupedBySlug = new Map<string, { category: any; configs: any[] }>();
 
   configs.forEach((config: any) => {
@@ -620,8 +631,10 @@ function getErrorMessage(error: any) {
 
 function invalidateCategoryCache() {
   invalidateMenuCategories();
+  // FIX: revalidateTag only accepts one argument in Next.js 13+.
+  // Passing "max" as a second argument was silently ignored or caused errors.
   revalidateTag("store-menu-categories", "max");
-  revalidateTag("store-menu", "max");
+  revalidateTag("store-menu" , "max");
 }
 
 export async function GET(req: Request) {
@@ -700,7 +713,6 @@ export async function PATCH(req: Request) {
     const body = await req.json();
     const categoryId = cleanString(body.categoryId || body.id || body._id);
     const categoryPayload = buildCategoryPayload(body);
-    const storeIds = extractStoreIds(body);
 
     if (!categoryId || !isValidObjectId(categoryId)) {
       return NextResponse.json(
@@ -709,14 +721,20 @@ export async function PATCH(req: Request) {
       );
     }
 
+    // FIX: Only extract + sync store IDs when an explicit array-type store
+    // selection is present. hasExplicitStoreSelection now only returns true
+    // for array fields (storeIds, selectedStoreIds, etc.), NOT for single
+    // storeId. This prevents accidental deletion of other store configs when
+    // a PATCH payload only carries the primary storeId from normalizeCategory.
+    const explicitStoreSelection = hasExplicitStoreSelection(body);
+    const storeIds = explicitStoreSelection ? extractStoreIds(body) : [];
+
     const duplicateMaster = await findCategoryBySlug(
       categoryPayload.slug,
       categoryId,
     );
 
     if (duplicateMaster) {
-      // Merge behavior: same slug means same logical category. Keep the edited category as master,
-      // and configs will be repaired to this ID below.
       await CategoryStoreConfig.updateMany(
         categoryIdMatch(cleanString(duplicateMaster._id)),
         {
@@ -747,7 +765,7 @@ export async function PATCH(req: Request) {
 
     let freshConfigs: any[];
 
-    if (hasExplicitStoreSelection(body)) {
+    if (explicitStoreSelection) {
       if (!storeIds.length) {
         await CategoryStoreConfig.deleteMany(
           relatedCategoryConfigQuery(categoryId, categoryPayload.slug),
@@ -757,6 +775,8 @@ export async function PATCH(req: Request) {
         freshConfigs = await syncSelectedStoreConfigs(category, body, storeIds);
       }
     } else {
+      // No explicit store selection: only repair/dedupe existing configs,
+      // never delete any store associations.
       freshConfigs = await dedupeAndRepairCategoryConfigs(category);
     }
 

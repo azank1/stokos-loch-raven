@@ -78,8 +78,6 @@ function getCategoryMasterId(item: unknown): string {
 
   const obj = item as MongoItem;
 
-  // Important: for categories, PATCH must use the master Category _id/id/categoryId,
-  // not storeConfigId/configId. Store configs are only assignment rows.
   return String(obj.categoryId || obj._id || obj.id || obj.slug || obj.name || "").trim();
 }
 
@@ -192,9 +190,6 @@ async function apiRebuildStoreMenuSnapshot(
   source?: unknown,
   fallback?: unknown
 ) {
-  // Categories are now saved/read only through CategoryStoreConfig.
-  // Never rebuild StoreMenu snapshots for category add/update/delete,
-  // otherwise old snapshot/category data can overwrite multi-store badges.
   if (type === "categories") return;
 
   try {
@@ -1273,7 +1268,6 @@ function normalizeUpsell(upsell: UpsellRule): UpsellRule {
     categoryName,
     categoryType: String((upsell as any).categoryType || categoryName || "").trim(),
 
-    // Legacy fields are kept for old screens/indexes, but the new flow does not use products.
     triggerCategoryId: String((upsell as any).triggerCategoryId || categoryId || "").trim(),
     triggerCategoryName: String((upsell as any).triggerCategoryName || categoryName || "").trim(),
     offerProductIds: [],
@@ -1557,8 +1551,6 @@ export function useMenuCrud() {
 
     const optimisticCategory = addTempId(payload, tempId) as Category;
 
-    // Save one category once with all selected storeIds.
-    // Do not POST one-by-one per store; that is what caused 3 badges to become 1/2 after refetch.
     setCategories((prev) => upsertCategoryRows(prev, [optimisticCategory]));
 
     try {
@@ -1580,8 +1572,27 @@ export function useMenuCrud() {
     }
   };
 
+  // FIX: updateCategory now always sends selectedStoreIds as an explicit array
+  // in the PATCH payload. This is the defence-in-depth counterpart to the
+  // hasExplicitStoreSelection fix in categories/route.ts.
+  //
+  // Previously, when a category was edited (e.g. name change only), normalizeCategory
+  // set storeIds correctly, but the old hasExplicitStoreSelection in the route
+  // treated even a single storeId field as an explicit store deselection, causing
+  // other store configs to be deleted. The route fix is the primary fix; this
+  // ensures the payload intent is always unambiguous regardless.
   const updateCategory = async (category: Category) => {
-    const payload = normalizeCategory(category) as Category;
+    const normalized = normalizeCategory(category) as CategoryWithMultiStore;
+
+    // Always send the full storeIds array so the PATCH route can distinguish
+    // "intentional multi-store update" from "incidental storeId field".
+    const payload = {
+      ...normalized,
+      // Guarantee selectedStoreIds is always an array (never undefined/null).
+      selectedStoreIds: (normalized.storeIds ?? []),
+      storeIds: (normalized.storeIds ?? []),
+    } as Category;
+
     const oldCategories = categories;
 
     setCategories((prev) =>
