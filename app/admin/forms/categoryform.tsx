@@ -1,6 +1,12 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
 import type { Category, CategoryStatus } from "../menu/types";
 import { FormInput, FormSelect } from "../menu/components/ui";
 
@@ -14,15 +20,9 @@ type CategoryWithMongo = Category & {
   slug?: string;
   storeId?: string;
   storeIds?: string[];
-  storeSlugs?: string[];
   stores?: string[];
-  selectedStores?: string[];
-  selectedStoreIds?: string[];
-  selectedStoreSlugs?: string[];
   storeConfigs?: Array<{
     storeId?: string;
-    storeSlug?: string;
-    store?: string;
     available?: boolean;
     isAvailable?: boolean;
     status?: string;
@@ -33,9 +33,7 @@ type CategoryFormProps = {
   item: Category | null;
   categories: Category[];
   selectedStoreId?: string;
-  // ✅ IMPORTANT: parent multi-store selector must pass this array
   selectedStoreIds?: string[];
-  selectedStores?: string[];
   onSave: (value: CategoryWithMongo) => void;
 };
 
@@ -43,7 +41,11 @@ function cleanText(value: unknown) {
   return String(value || "").trim();
 }
 
-function slugify(value: unknown) {
+function normalizeText(value: unknown) {
+  return cleanText(value).toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeStoreId(value: unknown) {
   return cleanText(value)
     .toLowerCase()
     .replace(/&/g, "and")
@@ -51,40 +53,10 @@ function slugify(value: unknown) {
     .replace(/^-+|-+$/g, "");
 }
 
-function normalizeText(value: unknown) {
-  return cleanText(value).toLowerCase().replace(/\s+/g, " ");
-}
-
-function normalizeStoreId(value: unknown) {
-  return slugify(value);
-}
-
-function uniqueStoreIds(...sources: unknown[]) {
-  const seen = new Set<string>();
-  const output: string[] = [];
-
-  function add(value: unknown) {
-    if (Array.isArray(value)) {
-      value.forEach(add);
-      return;
-    }
-
-    if (value && typeof value === "object") {
-      const obj = value as any;
-      add(obj.storeId || obj.storeSlug || obj.store || obj.slug || obj.id || obj.name);
-      return;
-    }
-
-    const cleanStoreId = normalizeStoreId(value);
-    if (!cleanStoreId || cleanStoreId === "all" || cleanStoreId === "all-stores") return;
-    if (seen.has(cleanStoreId)) return;
-
-    seen.add(cleanStoreId);
-    output.push(cleanStoreId);
-  }
-
-  sources.forEach(add);
-  return output;
+function uniqueStoreIds(values: unknown[]) {
+  return Array.from(
+    new Set(values.map(normalizeStoreId).filter(Boolean))
+  );
 }
 
 function getCategoryId(category: CategoryWithMongo | null | undefined) {
@@ -92,74 +64,30 @@ function getCategoryId(category: CategoryWithMongo | null | undefined) {
   return cleanText(category._id || category.id || category.slug || "");
 }
 
-function getCategoryStoreIds(category: CategoryWithMongo) {
-  return uniqueStoreIds(
-    category.storeIds,
-    category.storeSlugs,
-    category.stores,
-    category.selectedStores,
-    category.selectedStoreIds,
-    category.selectedStoreSlugs,
-    category.storeConfigs
-      ?.filter((config) => {
-        if (config?.available === false || config?.isAvailable === false) return false;
-        if (config?.status === "Inactive" || config?.status === "Hidden") return false;
-        return true;
-      })
-      .map((config) => config.storeId || config.storeSlug || config.store),
-    category.storeId
-  );
-}
+function getCategoryStoreIds(category: CategoryWithMongo | null | undefined) {
+  if (!category) return [];
 
-function buildInitialForm(
-  item: Category | null,
-  safeCategories: CategoryWithMongo[],
-  selectedStoreId: string,
-  selectedStoreIds: string[],
-  selectedStores: string[]
-): CategoryWithMongo {
-  const baseItem = (item || {}) as CategoryWithMongo;
+  const storeIds: string[] = [];
 
-  const targetStoreIds = uniqueStoreIds(
-    baseItem.storeIds,
-    baseItem.storeSlugs,
-    baseItem.stores,
-    baseItem.selectedStores,
-    baseItem.selectedStoreIds,
-    baseItem.selectedStoreSlugs,
-    baseItem.storeConfigs,
-    selectedStoreIds,
-    selectedStores,
-    baseItem.storeId,
-    selectedStoreId
-  );
+  if (category.storeId) storeIds.push(category.storeId);
 
-  if (item) {
-    return {
-      ...baseItem,
-      storeId: targetStoreIds[0] || baseItem.storeId || selectedStoreId,
-      storeIds: targetStoreIds,
-      storeSlugs: targetStoreIds,
-      stores: targetStoreIds,
-      selectedStores: targetStoreIds,
-      selectedStoreIds: targetStoreIds,
-      selectedStoreSlugs: targetStoreIds,
-    };
+  if (Array.isArray(category.storeIds)) {
+    storeIds.push(...category.storeIds);
   }
 
-  return {
-    id: "",
-    storeId: targetStoreIds[0] || selectedStoreId,
-    storeIds: targetStoreIds,
-    storeSlugs: targetStoreIds,
-    stores: targetStoreIds,
-    selectedStores: targetStoreIds,
-    selectedStoreIds: targetStoreIds,
-    selectedStoreSlugs: targetStoreIds,
-    name: "",
-    status: "Active" as CategoryStatus,
-    sortOrder: safeCategories.length + 1,
-  };
+  if (Array.isArray(category.stores)) {
+    storeIds.push(...category.stores);
+  }
+
+  if (Array.isArray(category.storeConfigs)) {
+    category.storeConfigs.forEach((config) => {
+      if (config?.available === false || config?.isAvailable === false) return;
+      if (["Inactive", "Hidden"].includes(cleanText(config?.status))) return;
+      if (config?.storeId) storeIds.push(config.storeId);
+    });
+  }
+
+  return uniqueStoreIds(storeIds);
 }
 
 const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
@@ -169,7 +97,6 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
       categories,
       selectedStoreId = "",
       selectedStoreIds = [],
-      selectedStores = [],
       onSave,
     },
     ref
@@ -179,52 +106,67 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
       [categories]
     );
 
-    const [form, setForm] = useState<CategoryWithMongo>(() =>
-      buildInitialForm(
-        item,
-        safeCategories,
-        selectedStoreId,
-        selectedStoreIds,
-        selectedStores
-      )
-    );
+    const activeSelectedStoreIds = useMemo(() => {
+      const fromMulti = uniqueStoreIds(selectedStoreIds);
+      const fromSingle = normalizeStoreId(selectedStoreId);
 
-    // ✅ Fix stale modal state when selected stores/item changes
+      if (fromMulti.length > 0) return fromMulti;
+      if (fromSingle) return [fromSingle];
+
+      return [];
+    }, [selectedStoreId, selectedStoreIds]);
+
+    const buildInitialForm = (): CategoryWithMongo => {
+      if (item) {
+        const editItem = item as CategoryWithMongo;
+        const itemStoreIds = getCategoryStoreIds(editItem);
+        const finalStoreIds =
+          itemStoreIds.length > 0 ? itemStoreIds : activeSelectedStoreIds;
+
+        return {
+          ...editItem,
+          name: editItem.name || "",
+          storeId: finalStoreIds[0] || "",
+          storeIds: finalStoreIds,
+          status: (editItem.status || "Active") as CategoryStatus,
+          sortOrder: Number(editItem.sortOrder || 1),
+        };
+      }
+
+      return {
+        id: "",
+        name: "",
+        storeId: activeSelectedStoreIds[0] || "",
+        storeIds: activeSelectedStoreIds,
+        status: "Active" as CategoryStatus,
+        sortOrder: safeCategories.length + 1,
+      };
+    };
+
+    const [form, setForm] = useState<CategoryWithMongo>(buildInitialForm);
+
     useEffect(() => {
-      setForm(
-        buildInitialForm(
-          item,
-          safeCategories,
-          selectedStoreId,
-          selectedStoreIds,
-          selectedStores
-        )
-      );
-    }, [item, safeCategories, selectedStoreId, selectedStoreIds, selectedStores]);
+      setForm(buildInitialForm());
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [item]);
 
     const submit = () => {
       const name = cleanText(form.name);
-
-      const targetStoreIds = uniqueStoreIds(
-        form.storeIds,
-        form.storeSlugs,
-        form.stores,
-        form.selectedStores,
-        form.selectedStoreIds,
-        form.selectedStoreSlugs,
-        selectedStoreIds,
-        selectedStores,
+      const submitStoreIds = uniqueStoreIds([
+        ...(Array.isArray(form.storeIds) ? form.storeIds : []),
+        ...(Array.isArray(form.stores) ? form.stores : []),
+        ...activeSelectedStoreIds,
         form.storeId,
-        selectedStoreId
-      );
+      ]);
 
       if (!name) return alert("Category name required");
 
-      if (!targetStoreIds.length) {
-        return alert("Select at least one store for category");
+      if (submitStoreIds.length === 0) {
+        return alert("Store is required for category");
       }
 
       const currentId = getCategoryId(form);
+
       const duplicate = safeCategories.find((category) => {
         const sameName = normalizeText(category.name) === normalizeText(name);
         if (!sameName) return false;
@@ -234,7 +176,8 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
         if (sameRecord) return false;
 
         const categoryStoreIds = getCategoryStoreIds(category);
-        return targetStoreIds.some((storeId) => categoryStoreIds.includes(storeId));
+
+        return submitStoreIds.some((storeId) => categoryStoreIds.includes(storeId));
       });
 
       if (duplicate) {
@@ -244,13 +187,10 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
       onSave({
         ...form,
         name,
-        storeId: targetStoreIds[0],
-        storeIds: targetStoreIds,
-        storeSlugs: targetStoreIds,
-        stores: targetStoreIds,
-        selectedStores: targetStoreIds,
-        selectedStoreIds: targetStoreIds,
-        selectedStoreSlugs: targetStoreIds,
+        storeId: submitStoreIds[0],
+        storeIds: submitStoreIds,
+        stores: submitStoreIds,
+        status: (form.status || "Active") as CategoryStatus,
         sortOrder: Number(form.sortOrder || 1),
       });
     };
@@ -261,7 +201,7 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
       <>
         <FormInput
           label="Category Name"
-          value={form.name}
+          value={String(form.name || "")}
           onChange={(value) =>
             setForm((prev) => ({
               ...prev,
@@ -274,7 +214,7 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
         <div className="grid gap-4 md:grid-cols-2">
           <FormInput
             label="Sort Order"
-            value={String(form.sortOrder)}
+            value={String(form.sortOrder || 1)}
             onChange={(value) =>
               setForm((prev) => ({
                 ...prev,
@@ -287,7 +227,7 @@ const CategoryForm = forwardRef<CategoryFormRef, CategoryFormProps>(
 
           <FormSelect
             label="Status"
-            value={form.status}
+            value={String(form.status || "Active")}
             onChange={(value) =>
               setForm((prev) => ({
                 ...prev,
