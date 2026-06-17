@@ -6,7 +6,6 @@ import {
   clearStoreMenuProductsCache,
   getStoreMenuProducts,
 } from "@/lib/server/menuproducts";
-import { getStoreMenuCategoriesFromDB } from "@/lib/server/menucategories";
 import { clearStoreMenuSnapshotCache } from "@/lib/server/storemenu-snapshot";
 
 export type MenuCategoryTab = {
@@ -248,7 +247,6 @@ function buildSlimSnapshotProduct(product: DbProduct, storeSlug: string) {
     status: cleanString(product?.status || "Active"),
     updatedAt: cleanString(product?.updatedAt),
 
-    // Keep these keys for frontend compatibility, but do not store heavy data in snapshot.
     // Product modal/detail API should load modifiers, sizes and upsells only after click.
     hasDetails: false,
     sizes: [],
@@ -272,6 +270,7 @@ function buildSlimSnapshotProducts(products: DbProduct[], storeSlug: string) {
     });
 }
 
+// Kept for backward imports only. Rebuild no longer saves categories to StoreMenu.
 export function buildSnapshotCategories(products: DbProduct[]) {
   const seen = new Set<string>();
 
@@ -307,6 +306,7 @@ export function buildSnapshotCategories(products: DbProduct[]) {
   return hasPopularProducts ? [POPULAR_CATEGORY, ...realCategories] : realCategories;
 }
 
+// Kept for backward imports only. Rebuild no longer saves categories to StoreMenu.
 export function buildSnapshotCategoriesFromAdmin(
   adminCategories: AdminCategory[],
   products: DbProduct[]
@@ -356,25 +356,14 @@ export async function rebuildStoreMenu(storeSlug: string, reason = "admin-change
   await connectDB();
 
   try {
-    // Important: admin save/update/delete must not rebuild from old in-memory product cache.
+    // Important: snapshot rebuild is now product/menuProduct only.
+    // Categories are saved/read only through CategoryStoreConfig + menucategories.ts.
     clearStoreMenuProductsCache(cleanStoreSlug);
     clearStoreMenuSnapshotCache(cleanStoreSlug);
 
-    const [products, adminCategories] = await Promise.all([
-      getStoreMenuProducts(cleanStoreSlug),
-      // Direct DB read intentionally used here so rebuild gets latest categories
-      // immediately, without waiting for Next unstable_cache revalidation.
-      getStoreMenuCategoriesFromDB(cleanStoreSlug),
-    ]);
-
+    const products = await getStoreMenuProducts(cleanStoreSlug);
     const safeProducts = Array.isArray(products) ? products : [];
     const slimProducts = buildSlimSnapshotProducts(safeProducts, cleanStoreSlug);
-    const safeAdminCategories = Array.isArray(adminCategories) ? adminCategories : [];
-
-    const categories = safeAdminCategories.length
-      ? buildSnapshotCategoriesFromAdmin(safeAdminCategories, slimProducts)
-      : buildSnapshotCategories(slimProducts);
-
     const now = new Date();
 
     const snapshot = await StoreMenu.findOneAndUpdate(
@@ -383,21 +372,23 @@ export async function rebuildStoreMenu(storeSlug: string, reason = "admin-change
         $set: {
           storeSlug: cleanStoreSlug,
           status: "ready",
-          categories,
           products: slimProducts,
 
-          // Do not duplicate the product list here. Old frontend fallback can still read
-          // menuProducts from old snapshots, but new snapshots should stay slim.
+          // Keep old key empty for compatibility. Do not duplicate product list.
           menuProducts: [],
 
           meta: {
             productCount: slimProducts.length,
-            categoryCount: categories.length,
+            categoryCount: 0,
             rebuiltReason: reason,
             errorMessage: "",
             lastFailedAt: null,
           },
           builtAt: now,
+        },
+        // Remove stale categories from old snapshots so they cannot overwrite UI/store badges.
+        $unset: {
+          categories: "",
         },
         $inc: { version: 1 },
       },
@@ -411,7 +402,7 @@ export async function rebuildStoreMenu(storeSlug: string, reason = "admin-change
 
     return {
       storeSlug: cleanStoreSlug,
-      categories,
+      categories: [],
       products: slimProducts,
       menuProducts: [],
       version: snapshot?.version || 1,

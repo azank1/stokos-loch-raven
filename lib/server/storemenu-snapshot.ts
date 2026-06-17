@@ -93,7 +93,6 @@ export async function getStoreMenuSnapshot(
       .select({
         _id: 0,
         storeSlug: 1,
-        categories: 1,
         products: 1,
         // Keep only for old snapshots. New snapshots save menuProducts as [].
         menuProducts: 1,
@@ -109,17 +108,19 @@ export async function getStoreMenuSnapshot(
       return result;
     }
 
-    const products = Array.isArray(snapshot?.products) && snapshot.products.length > 0
-      ? snapshot.products
-      : Array.isArray(snapshot?.menuProducts)
-        ? snapshot.menuProducts
-        : [];
+    const products =
+      Array.isArray(snapshot?.products) && snapshot.products.length > 0
+        ? snapshot.products
+        : Array.isArray(snapshot?.menuProducts)
+          ? snapshot.menuProducts
+          : [];
 
     const result: StoreMenuSnapshot = {
       storeSlug: cleanStoreSlug,
-      categories: Array.isArray(snapshot?.categories) ? snapshot.categories : [],
+      // Categories are intentionally not read from StoreMenu snapshot anymore.
+      // Frontend categories must come from CategoryStoreConfig via menucategories.ts.
+      categories: [],
       products,
-      // Return products here for frontend compatibility without storing duplicate data in DB.
       menuProducts: products,
       version: snapshot?.version,
       builtAt: snapshot?.builtAt || null,

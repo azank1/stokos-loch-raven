@@ -13,6 +13,11 @@ function cleanString(value: unknown) {
   return String(value || "").trim();
 }
 
+function cleanNumber(value: unknown) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
 const CategorySchema = new Schema(
   {
     name: {
@@ -40,10 +45,12 @@ const CategorySchema = new Schema(
       trim: true,
     },
 
+    // Legacy only. New store-wise category assignment must live in CategoryStoreConfig.
     storeId: {
       type: String,
       default: "",
       trim: true,
+      select: false,
     },
 
     sortOrder: {
@@ -78,8 +85,8 @@ CategorySchema.pre("validate", function () {
   doc.name = cleanString(doc.name);
   doc.description = cleanString(doc.description);
   doc.image = cleanString(doc.image);
-  doc.storeId = cleanString(doc.storeId);
-  doc.sortOrder = Number(doc.sortOrder || 0);
+  doc.storeId = "";
+  doc.sortOrder = cleanNumber(doc.sortOrder);
 
   if (!doc.slug && doc.name) {
     doc.slug = slugify(doc.name);

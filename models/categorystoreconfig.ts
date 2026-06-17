@@ -1,7 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 
-function slugify(value: string) {
-  return value
+function slugify(value: unknown) {
+  return String(value || "")
     .toLowerCase()
     .trim()
     .replace(/&/g, "and")
@@ -9,8 +9,17 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
+
 function normalizeStoreId(value: unknown) {
-  return String(value || "").trim().toLowerCase();
+  return slugify(value);
+}
+
+function cleanNumber(value: unknown) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
 }
 
 const CategoryStoreConfigSchema = new Schema(
@@ -24,6 +33,7 @@ const CategoryStoreConfigSchema = new Schema(
       type: String,
       required: true,
       trim: true,
+      lowercase: true,
     },
     categoryName: {
       type: String,
@@ -63,12 +73,13 @@ const CategoryStoreConfigSchema = new Schema(
 CategoryStoreConfigSchema.pre("validate", function () {
   const doc = this as any;
 
-  doc.categoryId = String(doc.categoryId || "").trim();
+  doc.categoryId = cleanString(doc.categoryId);
   doc.storeId = normalizeStoreId(doc.storeId);
-
-  if (!doc.categorySlug && doc.categoryName) {
-    doc.categorySlug = slugify(doc.categoryName);
-  }
+  doc.categoryName = cleanString(doc.categoryName);
+  doc.categorySlug = slugify(doc.categorySlug || doc.categoryName);
+  doc.available = doc.available !== false && doc.isAvailable !== false;
+  doc.isAvailable = doc.available;
+  doc.sortOrder = cleanNumber(doc.sortOrder);
 });
 
 CategoryStoreConfigSchema.index(
@@ -77,8 +88,10 @@ CategoryStoreConfigSchema.index(
 );
 CategoryStoreConfigSchema.index({ storeId: 1, status: 1, sortOrder: 1 });
 CategoryStoreConfigSchema.index({ storeId: 1, status: 1, available: 1, sortOrder: 1 });
+CategoryStoreConfigSchema.index({ storeId: 1, status: 1, isAvailable: 1, sortOrder: 1 });
 CategoryStoreConfigSchema.index({ storeId: 1, status: 1, categorySlug: 1, sortOrder: 1 });
 CategoryStoreConfigSchema.index({ categoryId: 1 });
+CategoryStoreConfigSchema.index({ categorySlug: 1, storeId: 1 });
 
 if (
   process.env.NODE_ENV === "development" &&

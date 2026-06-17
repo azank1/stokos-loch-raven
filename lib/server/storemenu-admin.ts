@@ -8,6 +8,9 @@ import Store from "@/models/store";
 import { rebuildStoreMenu } from "@/lib/server/storemenu-rebuilder";
 import { clearStoreMenuSnapshotCache } from "@/lib/server/storemenu-snapshot";
 
+// This helper is for product/menuProduct snapshot rebuilds only.
+// Category save/read is intentionally handled by CategoryStoreConfig + menucategories.ts.
+
 type AnyObject = Record<string, any>;
 
 type ExtractResult = {
@@ -38,7 +41,6 @@ const NESTED_KEYS_TO_SCAN = new Set([
   "storeconfigs",
   "assignments",
   "assignment",
-  "categoryconfigs",
   "productstoreconfigs",
   "upsellstoreconfigs",
 ]);
@@ -59,8 +61,10 @@ function isAllStoresValue(value: unknown) {
   const clean = cleanString(value).toLowerCase();
   const slug = cleanStoreSlug(clean);
 
-  return ["all", "all-stores", "all_store", "*"].includes(clean) ||
-    ["all", "all-stores"].includes(slug);
+  return (
+    ["all", "all-stores", "all_store", "*"].includes(clean) ||
+    ["all", "all-stores"].includes(slug)
+  );
 }
 
 function getDefaultStoreSlugs() {
@@ -68,7 +72,9 @@ function getDefaultStoreSlugs() {
     .map((store: any) => cleanStoreSlug(store?.slug || store?.id || store?.name))
     .filter(Boolean);
 
-  return Array.from(new Set(fromStoreList.length ? fromStoreList : ["towson", "liberty", "york"]));
+  return Array.from(
+    new Set(fromStoreList.length ? fromStoreList : ["towson", "liberty", "york"])
+  );
 }
 
 function addStoreKey(value: unknown, output: Set<string>) {
@@ -210,7 +216,10 @@ async function resolveStoreSlugs(storeKeys: string[], allStores = false) {
 
     if (slugs.length > 0) return slugs;
   } catch (error: any) {
-    console.warn("Store slug resolve failed before StoreMenu rebuild:", error?.message || error);
+    console.warn(
+      "Store slug resolve failed before StoreMenu rebuild:",
+      error?.message || error
+    );
   }
 
   return Array.from(new Set(cleanSlugs.filter(Boolean)));
@@ -240,8 +249,7 @@ export async function rebuildStoreMenusAfterAdminChange(
       clearStoreMenuSnapshotCache(cleanSlug);
 
       revalidatePath(`/store/${cleanSlug}`);
-revalidateTag("store-menu", "max");
-revalidateTag("store-menu-categories", "max");
+      revalidateTag("store-menu", "max");
 
       return cleanSlug;
     })
