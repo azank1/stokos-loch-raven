@@ -11,7 +11,7 @@ import {
   Tags,
 } from "lucide-react";
 
-import { useMenuCrud, type MenuCrudInitialData } from "./usemenucrud";
+import { useMenuCrud } from "./usemenucrud";
 import type {
   Category,
   ModifierGroup,
@@ -44,6 +44,30 @@ export type StoreItem = {
   status?: string;
 };
 
+const DEFAULT_STORES: StoreItem[] = [
+  {
+    _id: "towson",
+    id: "towson",
+    name: "Towson",
+    slug: "towson",
+    status: "Active",
+  },
+  {
+    _id: "liberty",
+    id: "liberty",
+    name: "Liberty",
+    slug: "liberty",
+    status: "Active",
+  },
+  {
+    _id: "york",
+    id: "york",
+    name: "York",
+    slug: "york",
+    status: "Active",
+  },
+];
+
 type ModalState =
   | { type: "products"; item: Product | null }
   | { type: "categories"; item: Category | null }
@@ -58,17 +82,11 @@ type LocalSnapshot = {
   upsellRules: UpsellRule[];
 };
 
-export type MenuManagementInitialData = MenuCrudInitialData;
+export default function MenuManagementClient() {
+  const crud = useMenuCrud();
 
-export default function MenuManagementClient({
-  initialData,
-}: {
-  initialData?: MenuManagementInitialData;
-}) {
-  const crud = useMenuCrud(initialData);
-
-  const [stores, setStores] = useState<StoreItem[]>([]);
-  const [storesLoading, setStoresLoading] = useState(true);
+  const [stores, setStores] = useState<StoreItem[]>(DEFAULT_STORES);
+  const [storesLoading, setStoresLoading] = useState(false);
   const [selectedStoreFilter, setSelectedStoreFilter] = useState("all");
 
   const firstStoreId = useMemo(() => {
@@ -147,8 +165,6 @@ export default function MenuManagementClient({
   useEffect(() => {
     const fetchStores = async () => {
       try {
-        setStoresLoading(true);
-
         const res = await fetch("/api/admin/stores", {
           cache: "no-store",
         });
@@ -165,16 +181,18 @@ export default function MenuManagementClient({
           ? data.stores
           : [];
 
-        setStores(safeStores);
+        if (safeStores.length > 0) {
+          setStores(safeStores);
+        }
       } catch (error) {
         console.error("Stores fetch failed:", error);
-        setStores([]);
+        setStores(DEFAULT_STORES);
       } finally {
         setStoresLoading(false);
       }
     };
 
-    fetchStores();
+    void fetchStores();
   }, []);
 
   useEffect(() => {
@@ -492,7 +510,7 @@ export default function MenuManagementClient({
     }
   };
 
-if (!mounted) {
+  if (!mounted) {
     return (
       <div className="w-full space-y-5">
         <section className="rounded-[30px] bg-green-700 p-6 text-white md:p-8">
@@ -661,11 +679,6 @@ if (!mounted) {
           </div>
         </div>
 
-        {storesLoading && (
-          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
-            Loading stores...
-          </div>
-        )}
 
         {!storesLoading && stores.length === 0 && (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">

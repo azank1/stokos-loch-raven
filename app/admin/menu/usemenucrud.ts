@@ -35,16 +35,6 @@ const RESPONSE_KEYS: Record<MenuEntity, string[]> = {
   upsells: ["upsellRule", "upsellRules", "upsell", "upsells"],
 };
 
-export type MenuCrudInitialData = {
-  loaded?: boolean;
-  products?: Product[];
-  categories?: Category[];
-  modifierGroups?: ModifierGroup[];
-  upsellRules?: UpsellRule[];
-};
-
-type MenuBootstrapPayload = Required<Omit<MenuCrudInitialData, "loaded">>;
-
 type MongoItem = {
   _id?: string;
   id?: string;
@@ -248,66 +238,6 @@ async function apiGet<T>(type: MenuEntity): Promise<T[]> {
   } catch (error) {
     console.error(`Failed to load ${type}`, error);
     return [];
-  }
-}
-
-function getBootstrapArray<T>(
-  json: any,
-  key: keyof MenuBootstrapPayload
-): T[] {
-  const sources = [json?.data, json?.payload, json?.result, json];
-
-  for (const source of sources) {
-    if (source && Array.isArray(source[key])) {
-      return source[key] as T[];
-    }
-  }
-
-  return [];
-}
-
-async function apiGetBootstrap(): Promise<MenuBootstrapPayload> {
-  try {
-    const res = await fetch(`/api/admin/menu/bootstrap?t=${Date.now()}`, {
-      method: "GET",
-      cache: "no-store",
-      headers: {
-        "Cache-Control": "no-cache",
-      },
-    });
-
-    const json = await res.json().catch(() => null);
-
-    if (!res.ok || json?.success === false) {
-      throw new Error(json?.message || "Failed to load admin menu bootstrap");
-    }
-
-    return {
-      products: getBootstrapArray<Product>(json, "products"),
-      categories: getBootstrapArray<Category>(json, "categories"),
-      modifierGroups: getBootstrapArray<ModifierGroup>(json, "modifierGroups"),
-      upsellRules: getBootstrapArray<UpsellRule>(json, "upsellRules"),
-    };
-  } catch (error) {
-    console.error(
-      "Admin menu bootstrap failed, falling back to split endpoints:",
-      error
-    );
-
-    const [products, categories, modifierGroups, upsellRules] =
-      await Promise.all([
-        apiGet<Product>("products"),
-        apiGet<Category>("categories"),
-        apiGet<ModifierGroup>("modifier-groups"),
-        apiGet<UpsellRule>("upsells"),
-      ]);
-
-    return {
-      products,
-      categories,
-      modifierGroups,
-      upsellRules,
-    };
   }
 }
 
@@ -1479,78 +1409,73 @@ function updateLocalItem<T extends object>(items: T[], savedItem: T) {
   });
 }
 
-export function useMenuCrud(initialData?: MenuCrudInitialData) {
-  const hasInitialData = initialData?.loaded === true;
+export function useMenuCrud() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
+  const [upsellRules, setUpsellRules] = useState<UpsellRule[]>([]);
 
-  const [products, setProducts] = useState<Product[]>(() =>
-    safeArray<Product>(initialData?.products).map(normalizeProduct)
-  );
-
-  const [categories, setCategories] = useState<Category[]>(() =>
-    sortBySortOrder(
-      safeArray<Category>(initialData?.categories).map(
-        normalizeCategory
-      ) as Category[]
-    )
-  );
-
-  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>(() =>
-    safeArray<ModifierGroup>(initialData?.modifierGroups).map(normalizeModifier)
-  );
-
-  const [upsellRules, setUpsellRules] = useState<UpsellRule[]>(() =>
-    safeArray<UpsellRule>(initialData?.upsellRules).map(normalizeUpsell)
-  );
-
-  // Important: true rakho taake MenuManagementClient full loading screen na dikhaye
+  // Keep this true so MenuManagementClient never blocks the whole page.
+  // Each entity updates the UI as soon as its own request finishes.
   const [isLoaded, setIsLoaded] = useState(true);
 
-  const firstLoadDone = useRef(hasInitialData);
   const isLoadingRef = useRef(false);
 
-  const loadMenu = useCallback(
-    async (options: { silent?: boolean } = {}) => {
-      if (isLoadingRef.current) return;
+  const loadMenu = useCallback(async () => {
+    if (isLoadingRef.current) return;
 
-      isLoadingRef.current = true;
+    isLoadingRef.current = true;
+    setIsLoaded(true);
 
-      try {
-        // Products ko sab se pehle load karo
-        const productsData = await apiGet<Product>("products");
-
+    const productsPromise = apiGet<Product>("products")
+      .then((productsData) => {
         setProducts(productsData.map(normalizeProduct));
+      })
+      .catch((error) => {
+        console.error("Products fetch failed:", error);
+      });
 
-        firstLoadDone.current = true;
-        setIsLoaded(true);
-
-        // Baqi data background mein parallel load hoga
-        const [categoriesData, modifiersData, upsellsData] = await Promise.all([
-          apiGet<Category>("categories"),
-          apiGet<ModifierGroup>("modifier-groups"),
-          apiGet<UpsellRule>("upsells"),
-        ]);
-
+    const categoriesPromise = apiGet<Category>("categories")
+      .then((categoriesData) => {
         setCategories(
-          sortBySortOrder(
-            categoriesData.map(normalizeCategory) as Category[]
-          )
+          sortBySortOrder(categoriesData.map(normalizeCategory) as Category[])
         );
+      })
+      .catch((error) => {
+        console.error("Categories fetch failed:", error);
+      });
 
+    const modifiersPromise = apiGet<ModifierGroup>("modifier-groups")
+      .then((modifiersData) => {
         setModifierGroups(modifiersData.map(normalizeModifier));
+      })
+      .catch((error) => {
+        console.error("Modifier groups fetch failed:", error);
+      });
+
+    const upsellsPromise = apiGet<UpsellRule>("upsells")
+      .then((upsellsData) => {
         setUpsellRules(upsellsData.map(normalizeUpsell));
-      } catch (error) {
-        console.error("Menu load failed:", error);
-        setIsLoaded(true);
-      } finally {
-        isLoadingRef.current = false;
-      }
-    },
-    []
-  );
+      })
+      .catch((error) => {
+        console.error("Upsells fetch failed:", error);
+      });
+
+    await Promise.allSettled([
+      productsPromise,
+      categoriesPromise,
+      modifiersPromise,
+      upsellsPromise,
+    ]);
+
+    isLoadingRef.current = false;
+    setIsLoaded(true);
+  }, []);
 
   useEffect(() => {
-    void loadMenu({ silent: true });
+    void loadMenu();
   }, [loadMenu]);
+
   const addProduct = async (product: Product) => {
     const tempId = `temp-product-${Date.now()}`;
     const payload = buildProductApiPayload(product);
@@ -1677,25 +1602,13 @@ export function useMenuCrud(initialData?: MenuCrudInitialData) {
     }
   };
 
-  // FIX: updateCategory now always sends selectedStoreIds as an explicit array
-  // in the PATCH payload. This is the defence-in-depth counterpart to the
-  // hasExplicitStoreSelection fix in categories/route.ts.
-  //
-  // Previously, when a category was edited (e.g. name change only), normalizeCategory
-  // set storeIds correctly, but the old hasExplicitStoreSelection in the route
-  // treated even a single storeId field as an explicit store deselection, causing
-  // other store configs to be deleted. The route fix is the primary fix; this
-  // ensures the payload intent is always unambiguous regardless.
   const updateCategory = async (category: Category) => {
     const normalized = normalizeCategory(category) as CategoryWithMultiStore;
 
-    // Always send the full storeIds array so the PATCH route can distinguish
-    // "intentional multi-store update" from "incidental storeId field".
     const payload = {
       ...normalized,
-      // Guarantee selectedStoreIds is always an array (never undefined/null).
-      selectedStoreIds: (normalized.storeIds ?? []),
-      storeIds: (normalized.storeIds ?? []),
+      selectedStoreIds: normalized.storeIds ?? [],
+      storeIds: normalized.storeIds ?? [],
     } as Category;
 
     const oldCategories = categories;
@@ -1745,7 +1658,9 @@ export function useMenuCrud(initialData?: MenuCrudInitialData) {
       return itemIds.includes(cleanId);
     });
 
-    const masterCategoryId = getCategoryMasterId(matchedCategory || { id: cleanId });
+    const masterCategoryId = getCategoryMasterId(
+      matchedCategory || { id: cleanId }
+    );
 
     if (!masterCategoryId) {
       throw new Error("Missing master category ID for delete");
@@ -1754,7 +1669,10 @@ export function useMenuCrud(initialData?: MenuCrudInitialData) {
     setCategories((prev) =>
       prev.filter((item: any) => {
         const itemMasterId = getCategoryMasterId(item);
-        return itemMasterId !== masterCategoryId && !sameCategoryRow(item, matchedCategory);
+        return (
+          itemMasterId !== masterCategoryId &&
+          !sameCategoryRow(item, matchedCategory)
+        );
       })
     );
 
@@ -1921,6 +1839,6 @@ export function useMenuCrud(initialData?: MenuCrudInitialData) {
     updateUpsell,
     deleteUpsell,
 
-    reloadMenu: () => loadMenu({ silent: true }),
+    reloadMenu: loadMenu,
   };
 }
