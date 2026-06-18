@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   CheckCircle2,
   CreditCard,
@@ -73,6 +73,8 @@ const ALL_STATUSES = [
   "Cancelled",
 ] as const;
 
+const PAGE_SIZE = 20;
+
 export default function OrdersDashboard() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [search, setSearch] = useState("");
@@ -81,18 +83,25 @@ export default function OrdersDashboard() {
   const [notification, setNotification] = useState("");
   const [loading, setLoading] = useState(true);
   const [advancing, setAdvancing] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (pageNum = page) => {
     try {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (search.trim()) params.set("search", search.trim());
+      params.set("page", pageNum.toString());
+      params.set("limit", PAGE_SIZE.toString());
 
       const res = await fetch(`/api/admin/orders?${params}`);
       const data = await res.json();
 
       if (data.success) {
         setOrders(data.orders);
+        setTotalPages(data.pages || 1);
+        setTotalOrders(data.total || 0);
         setActiveOrder((current) => {
           if (current) {
             return (
@@ -109,13 +118,17 @@ export default function OrdersDashboard() {
     } finally {
       setLoading(false);
     }
+  }, [statusFilter, search, page]);
+
+  useEffect(() => {
+    setPage(1);
   }, [statusFilter, search]);
 
   useEffect(() => {
-    loadOrders();
-    const interval = setInterval(loadOrders, 15000);
+    loadOrders(page);
+    const interval = setInterval(() => loadOrders(page), 15000);
     return () => clearInterval(interval);
-  }, [loadOrders]);
+  }, [loadOrders, page]);
 
   useEffect(() => {
     if (!notification) return;
@@ -123,18 +136,7 @@ export default function OrdersDashboard() {
     return () => clearTimeout(timer);
   }, [notification]);
 
-  const filteredOrders = useMemo(() => {
-    const value = search.toLowerCase().trim();
-    if (!value) return orders;
-    return orders.filter(
-      (order) =>
-        safeText(order.orderNumber).includes(value) ||
-        safeText(order.customerName).includes(value) ||
-        safeText(order.customerEmail).includes(value) ||
-        safeText(order.storeName).includes(value) ||
-        safeText(order.orderType).includes(value)
-    );
-  }, [orders, search]);
+  const filteredOrders = orders;
 
   const totalRevenue = orders.reduce(
     (acc, order) => acc + Number(order.amountTotal || 0),
@@ -265,13 +267,13 @@ export default function OrdersDashboard() {
               <div>
                 <h2 className="text-xl font-black uppercase">Orders</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  {loading ? "Loading..." : `${filteredOrders.length} order${filteredOrders.length !== 1 ? "s" : ""}`}
+                  {loading ? "Loading..." : `${totalOrders} order${totalOrders !== 1 ? "s" : ""} total`}
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={loadOrders}
+                onClick={() => loadOrders(page)}
                 className="rounded-full bg-zinc-100 px-4 py-2 text-xs font-black uppercase text-zinc-600 hover:bg-zinc-200"
               >
                 Refresh
@@ -308,7 +310,7 @@ export default function OrdersDashboard() {
             </div>
           </div>
 
-          <div className="max-h-[760px] space-y-3 overflow-y-auto p-4">
+          <div className="max-h-[640px] space-y-3 overflow-y-auto p-4">
             {loading ? (
               <div className="flex h-48 items-center justify-center text-zinc-400">
                 <p className="font-bold">Loading orders...</p>
@@ -375,6 +377,33 @@ export default function OrdersDashboard() {
               })
             )}
           </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-zinc-200 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || loading}
+                className="rounded-full px-3 py-1.5 text-xs font-black uppercase text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40"
+              >
+                ← Prev
+              </button>
+
+              <p className="text-xs font-black text-zinc-500">
+                Page {page} of {totalPages}
+              </p>
+
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || loading}
+                className="rounded-full px-3 py-1.5 text-xs font-black uppercase text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40"
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Order detail */}
@@ -546,6 +575,30 @@ export default function OrdersDashboard() {
                           {formatMoney(activeOrder.currency, activeOrder.amountTotal)}
                         </span>
                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Status History */}
+              {activeOrder.statusHistory && activeOrder.statusHistory.length > 0 && (
+                <div className="px-6 pb-4">
+                  <div className="rounded-3xl border border-zinc-200 p-5">
+                    <p className="mb-4 text-xs font-black uppercase text-zinc-500">
+                      Order Timeline
+                    </p>
+                    <div className="space-y-3">
+                      {[...activeOrder.statusHistory].reverse().map((h, i) => (
+                        <div key={i} className="flex items-center gap-3">
+                          <div className="h-2 w-2 shrink-0 rounded-full bg-green-700" />
+                          <div className="flex flex-1 items-center justify-between">
+                            <span className="text-sm font-black">{h.status}</span>
+                            <span className="text-xs text-zinc-500">
+                              {new Date(h.at).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>

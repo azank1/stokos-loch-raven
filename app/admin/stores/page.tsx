@@ -109,14 +109,14 @@ export default function StoresPage() {
               </p>
             </div>
 
-            {/* <button
+            <button
               type="button"
               onClick={handleAddStoreClick}
               className="flex w-fit items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-black text-green-800 transition hover:bg-green-50"
             >
               <Plus size={18} />
               Add Store
-            </button> */}
+            </button>
           </div>
         </div>
 

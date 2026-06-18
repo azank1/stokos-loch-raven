@@ -13,7 +13,9 @@ export async function GET(req: Request) {
     const status = searchParams.get("status");
     const storeSlug = searchParams.get("store");
     const search = searchParams.get("search");
-    const limit = Math.min(parseInt(searchParams.get("limit") || "100"), 200);
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+    const limit = Math.min(Math.max(1, parseInt(searchParams.get("limit") || "20")), 100);
+    const skip = (page - 1) * limit;
 
     const query: Record<string, unknown> = {};
 
@@ -35,12 +37,19 @@ export async function GET(req: Request) {
       ];
     }
 
-    const orders = await Order.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
+    const [orders, total] = await Promise.all([
+      Order.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Order.countDocuments(query),
+    ]);
 
-    return NextResponse.json({ success: true, orders });
+    return NextResponse.json({
+      success: true,
+      orders,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      limit,
+    });
   } catch (error) {
     console.error("GET ADMIN ORDERS ERROR:", error);
     return NextResponse.json(

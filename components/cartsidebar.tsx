@@ -109,6 +109,12 @@ const upsellByCategory: Record<string, CartItem[]> = {
   ],
 };
 
+type StoreConfig = {
+  deliveryFee: number;
+  taxRate: number;
+  minimumOrder: number;
+};
+
 export default function CartSidebar() {
   const [mounted, setMounted] = useState(false);
 
@@ -119,6 +125,7 @@ export default function CartSidebar() {
   const currentStore = STORES.find((store) => store.slug === slug) || STORES[0];
 
   const [loading, setLoading] = useState(false);
+  const [storeConfig, setStoreConfig] = useState<StoreConfig | null>(null);
 
   const [orderType, setOrderType] = useState<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState<string | null>(null);
@@ -132,6 +139,18 @@ export default function CartSidebar() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!slug) return;
+    fetch(`/api/store/${slug}/config`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          setStoreConfig({ deliveryFee: d.deliveryFee, taxRate: d.taxRate, minimumOrder: d.minimumOrder });
+        }
+      })
+      .catch(() => {});
+  }, [slug]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -185,6 +204,11 @@ export default function CartSidebar() {
     (acc, item) => acc + item.price * item.quantity,
     0
   );
+
+  const isDelivery = orderType === "delivery";
+  const deliveryFee = isDelivery ? (storeConfig?.deliveryFee ?? 0) : 0;
+  const taxAmount = storeConfig ? subtotal * (storeConfig.taxRate / 100) : 0;
+  const estimatedTotal = subtotal + deliveryFee + taxAmount;
 
   const mainCartItems = cart.filter((item) => item.category !== "upsell");
 
@@ -501,12 +525,32 @@ export default function CartSidebar() {
           </div>
 
           <div className="border-t bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950 sm:p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <span className="text-xs font-bold uppercase text-zinc-500">
-                Subtotal
-              </span>
+            <div className="mb-3 space-y-1.5 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500">Subtotal</span>
+                <span className="font-bold">${subtotal.toFixed(2)}</span>
+              </div>
 
-              <span className="text-xl font-black">${subtotal.toFixed(2)}</span>
+              {isDelivery && storeConfig && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Delivery Fee</span>
+                  <span className="font-bold">
+                    {deliveryFee === 0 ? "Free" : `$${deliveryFee.toFixed(2)}`}
+                  </span>
+                </div>
+              )}
+
+              {storeConfig && storeConfig.taxRate > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Est. Tax ({storeConfig.taxRate}%)</span>
+                  <span className="font-bold">${taxAmount.toFixed(2)}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-700">
+                <span className="font-black uppercase">Est. Total</span>
+                <span className="text-xl font-black">${estimatedTotal.toFixed(2)}</span>
+              </div>
             </div>
 
             <button
