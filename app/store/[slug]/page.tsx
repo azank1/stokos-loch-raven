@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Navbar from "@/components/navbar";
 import Hero from "@/components/hero";
 import Categories from "@/components/categories";
@@ -12,6 +13,7 @@ import ScrollMenu from "@/components/scrollmenu";
 import MenuSectionsClient from "@/components/menusectionclient";
 import { getStoreMenuPayload, type StoreMenuApiData } from "@/lib/server/storemenu";
 
+export const dynamic = "force-dynamic";
 export const revalidate = 30;
 export const dynamicParams = true;
 
@@ -60,8 +62,6 @@ function pickNonEmptyArray<T>(first?: T[], second?: T[]) {
 
 async function getInitialStoreMenu(slug: string): Promise<StoreMenuApiData> {
   try {
-    // ✅ Important: server component mein apni hi REST API call mat karo.
-    // Direct server helper = no internal HTTP round-trip, no duplicate cold start.
     return await getStoreMenuPayload(slug);
   } catch (error) {
     console.error("Initial store menu load error:", error);
@@ -89,7 +89,10 @@ export default async function StorePage({ params }: StorePageProps) {
 
   return (
     <main className="min-h-screen bg-white dark:bg-black">
-      <ScrollMenu />
+      <Suspense fallback={null}>
+        <ScrollMenu />
+      </Suspense>
+
       <Navbar />
       <CartSidebar />
       <StartOrder />
@@ -97,11 +100,13 @@ export default async function StorePage({ params }: StorePageProps) {
 
       <Categories storeSlug={slug} initialCategories={initialCategories} />
 
-      <DealsSection
-        storeSlug={slug}
-        categories={initialCategories}
-        initialProducts={initialProducts}
-      />
+      <Suspense fallback={null}>
+        <DealsSection
+          storeSlug={slug}
+          categories={initialCategories}
+          initialProducts={initialProducts}
+        />
+      </Suspense>
 
       <MenuSectionsClient
         storeSlug={slug}

@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 const MenuSection = dynamic(() => import("@/components/menusection"), {
@@ -36,7 +37,7 @@ type StoreMenuApiData = {
 };
 
 interface MenuSectionsClientProps {
-  storeSlug: string;
+  storeSlug?: string;
   categories?: MenuCategoryTab[];
   initialProducts?: any[];
   initialMenuData?: StoreMenuApiData;
@@ -158,12 +159,26 @@ function productBelongsToCategory(product: any, category: MenuCategoryTab) {
   return categoryKeys.some((key) => productKeys.has(key));
 }
 
+function getSlugFromParams(params: ReturnType<typeof useParams>) {
+  const rawSlug = params?.slug;
+
+  if (Array.isArray(rawSlug)) {
+    return rawSlug[0] || "";
+  }
+
+  return typeof rawSlug === "string" ? rawSlug : "";
+}
+
 export default function MenuSectionsClient({
   storeSlug,
   categories = [],
   initialProducts = [],
   initialMenuData,
 }: MenuSectionsClientProps) {
+  const params = useParams();
+  const routeSlug = getSlugFromParams(params);
+  const resolvedStoreSlug = cleanString(storeSlug || routeSlug);
+
   const [clientMenuData, setClientMenuData] = useState<StoreMenuApiData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -192,7 +207,7 @@ export default function MenuSectionsClient({
   }, [clientMenuData, initialMenuData, categories]);
 
   useEffect(() => {
-    if (!storeSlug) return;
+    if (!resolvedStoreSlug) return;
 
     if (products.length > 0 && visibleCategories.length > 0) return;
 
@@ -203,7 +218,7 @@ export default function MenuSectionsClient({
 
       try {
         const response = await fetch(
-          `/api/store/${encodeURIComponent(storeSlug)}/menu`,
+          `/api/store/${encodeURIComponent(resolvedStoreSlug)}/menu`,
           {
             method: "GET",
             headers: {
@@ -233,9 +248,9 @@ export default function MenuSectionsClient({
     loadMenu();
 
     return () => controller.abort();
-  }, [storeSlug, products.length, visibleCategories.length]);
+  }, [resolvedStoreSlug, products.length, visibleCategories.length]);
 
-  if (!storeSlug) return null;
+  if (!resolvedStoreSlug) return null;
 
   if (products.length === 0 && isLoading) {
     return (
