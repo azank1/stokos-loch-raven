@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import Image from "next/image";
+import ClerkAuthControls from "@/components/clerkauthcontrols";
 
 export default function MainNavbar() {
   const [isDark, setIsDark] = useState(false);
@@ -76,6 +77,8 @@ export default function MainNavbar() {
 
           {/* Right Actions */}
           <div className="ml-auto flex items-center gap-3 md:gap-4">
+            <ClerkAuthControls variant="main" />
+
             <a
               href="/mainwebsite/location?action=order"
               className="rounded-full bg-white px-4 py-2 text-xs font-black text-[#16A34A] transition hover:bg-green-50 dark:bg-white dark:text-[#003b11] md:px-6 md:py-3 md:text-sm"

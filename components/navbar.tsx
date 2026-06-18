@@ -19,6 +19,7 @@ import {
 import { useCartStore } from "@/app/store/[slug]/usecartstore";
 import { STORES } from "@/lib/data/stores";
 import { useSearchStore } from "@/lib/data/useSearchStore";
+import ClerkAuthControls from "@/components/clerkauthcontrols";
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -186,12 +187,7 @@ export default function Navbar() {
                 <ChevronDown size={15} />
               </button>
 
-              <button
-                type="button"
-                className="shrink-0 whitespace-nowrap rounded-full bg-white px-4 py-2 text-xs font-bold text-green-800 transition hover:bg-green-100 md:px-5 md:text-sm"
-              >
-                Sign In
-              </button>
+              <ClerkAuthControls variant="store" />
 
               <button
                 type="button"

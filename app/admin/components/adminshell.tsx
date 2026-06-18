@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Bell, Menu as MenuIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
 import AdminSidebar from "./adminsidebar";
+import ClerkAuthControls from "@/components/clerkauthcontrols";
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -64,6 +65,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
             </div>
 
             <div className="hidden items-center gap-3 md:flex">
+              <ClerkAuthControls variant="admin" />
+
               <div className="flex items-center gap-2 rounded-full border border-green-100 bg-white px-4 py-2 shadow-sm">
                 <span className="h-2.5 w-2.5 rounded-full bg-green-600" />
                 <span className="text-xs font-black uppercase text-green-800">

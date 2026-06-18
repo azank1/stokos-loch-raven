@@ -21,13 +21,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ClerkProvider>
     <html lang="en" suppressHydrationWarning>
       <body
         suppressHydrationWarning
         className={`${jakarta.variable} min-h-screen bg-white font-sans antialiased dark:bg-black`}
       >
-        <main className="min-h-screen">{children}</main>
+        <ClerkProvider>
+          <main className="min-h-screen">{children}</main>
 
         <Script
           id="stripe-back-fix"
@@ -45,8 +45,8 @@ export default function RootLayout({
             `,
           }}
         />
+        </ClerkProvider>
       </body>
     </html>
-    </ClerkProvider>
   );
 }
