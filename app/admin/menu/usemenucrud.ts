@@ -35,6 +35,16 @@ const RESPONSE_KEYS: Record<MenuEntity, string[]> = {
   upsells: ["upsellRule", "upsellRules", "upsell", "upsells"],
 };
 
+export type MenuCrudInitialData = {
+  loaded?: boolean;
+  products?: Product[];
+  categories?: Category[];
+  modifierGroups?: ModifierGroup[];
+  upsellRules?: UpsellRule[];
+};
+
+type MenuBootstrapPayload = Required<Omit<MenuCrudInitialData, "loaded">>;
+
 type MongoItem = {
   _id?: string;
   id?: string;
@@ -238,6 +248,59 @@ async function apiGet<T>(type: MenuEntity): Promise<T[]> {
   } catch (error) {
     console.error(`Failed to load ${type}`, error);
     return [];
+  }
+}
+
+function getBootstrapArray<T>(json: any, key: keyof MenuBootstrapPayload): T[] {
+  const sources = [json?.data, json?.payload, json?.result, json];
+
+  for (const source of sources) {
+    if (source && Array.isArray(source[key])) {
+      return source[key] as T[];
+    }
+  }
+
+  return [];
+}
+
+async function apiGetBootstrap(): Promise<MenuBootstrapPayload> {
+  try {
+    const res = await fetch(`/api/admin/menu/bootstrap?t=${Date.now()}`, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache",
+      },
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok || json?.success === false) {
+      throw new Error(json?.message || "Failed to load admin menu bootstrap");
+    }
+
+    return {
+      products: getBootstrapArray<Product>(json, "products"),
+      categories: getBootstrapArray<Category>(json, "categories"),
+      modifierGroups: getBootstrapArray<ModifierGroup>(json, "modifierGroups"),
+      upsellRules: getBootstrapArray<UpsellRule>(json, "upsellRules"),
+    };
+  } catch (error) {
+    console.error("Admin menu bootstrap failed, falling back to split endpoints:", error);
+
+    const [products, categories, modifierGroups, upsellRules] = await Promise.all([
+      apiGet<Product>("products"),
+      apiGet<Category>("categories"),
+      apiGet<ModifierGroup>("modifier-groups"),
+      apiGet<UpsellRule>("upsells"),
+    ]);
+
+    return {
+      products,
+      categories,
+      modifierGroups,
+      upsellRules,
+    };
   }
 }
 
@@ -1409,41 +1472,64 @@ function updateLocalItem<T extends object>(items: T[], savedItem: T) {
   });
 }
 
-export function useMenuCrud() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>([]);
-  const [upsellRules, setUpsellRules] = useState<UpsellRule[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+export function useMenuCrud(initialData?: MenuCrudInitialData) {
+  const hasInitialData = initialData?.loaded === true;
 
-  const firstLoadDone = useRef(false);
+  const [products, setProducts] = useState<Product[]>(() =>
+    safeArray<Product>(initialData?.products).map(normalizeProduct)
+  );
 
-  const loadMenu = useCallback(async () => {
-    if (!firstLoadDone.current) {
+  const [categories, setCategories] = useState<Category[]>(() =>
+    sortBySortOrder(
+      safeArray<Category>(initialData?.categories).map(normalizeCategory) as Category[]
+    )
+  );
+
+  const [modifierGroups, setModifierGroups] = useState<ModifierGroup[]>(() =>
+    safeArray<ModifierGroup>(initialData?.modifierGroups).map(normalizeModifier)
+  );
+
+  const [upsellRules, setUpsellRules] = useState<UpsellRule[]>(() =>
+    safeArray<UpsellRule>(initialData?.upsellRules).map(normalizeUpsell)
+  );
+
+  const [isLoaded, setIsLoaded] = useState(hasInitialData);
+
+  const firstLoadDone = useRef(hasInitialData);
+  const backgroundRefreshStarted = useRef(false);
+
+  const loadMenu = useCallback(async (options: { silent?: boolean } = {}) => {
+    const shouldShowLoader = !firstLoadDone.current && !options.silent;
+
+    if (shouldShowLoader) {
       setIsLoaded(false);
     }
 
-    const [productsData, categoriesData, modifiersData, upsellsData] =
-      await Promise.all([
-        apiGet<Product>("products"),
-        apiGet<Category>("categories"),
-        apiGet<ModifierGroup>("modifier-groups"),
-        apiGet<UpsellRule>("upsells"),
-      ]);
+    const menuData = await apiGetBootstrap();
 
-    setProducts(productsData.map(normalizeProduct));
+    setProducts(menuData.products.map(normalizeProduct));
     setCategories(
-      sortBySortOrder(categoriesData.map(normalizeCategory) as Category[])
+      sortBySortOrder(menuData.categories.map(normalizeCategory) as Category[])
     );
-    setModifierGroups(modifiersData.map(normalizeModifier));
-    setUpsellRules(upsellsData.map(normalizeUpsell));
+    setModifierGroups(menuData.modifierGroups.map(normalizeModifier));
+    setUpsellRules(menuData.upsellRules.map(normalizeUpsell));
 
     firstLoadDone.current = true;
     setIsLoaded(true);
   }, []);
 
   useEffect(() => {
-    loadMenu();
+    if (firstLoadDone.current && !backgroundRefreshStarted.current) {
+      backgroundRefreshStarted.current = true;
+
+      const timer = window.setTimeout(() => {
+        void loadMenu({ silent: true });
+      }, 500);
+
+      return () => window.clearTimeout(timer);
+    }
+
+    void loadMenu();
   }, [loadMenu]);
 
   const addProduct = async (product: Product) => {
@@ -1816,6 +1902,6 @@ export function useMenuCrud() {
     updateUpsell,
     deleteUpsell,
 
-    reloadMenu: loadMenu,
+    reloadMenu: () => loadMenu({ silent: true }),
   };
 }

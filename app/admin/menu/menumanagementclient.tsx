@@ -11,7 +11,7 @@ import {
   Tags,
 } from "lucide-react";
 
-import { useMenuCrud } from "./usemenucrud";
+import { useMenuCrud, type MenuCrudInitialData } from "./usemenucrud";
 import type {
   Category,
   ModifierGroup,
@@ -58,8 +58,14 @@ type LocalSnapshot = {
   upsellRules: UpsellRule[];
 };
 
-export default function MenuManagementClient() {
-  const crud = useMenuCrud();
+export type MenuManagementInitialData = MenuCrudInitialData;
+
+export default function MenuManagementClient({
+  initialData,
+}: {
+  initialData?: MenuManagementInitialData;
+}) {
+  const crud = useMenuCrud(initialData);
 
   const [stores, setStores] = useState<StoreItem[]>([]);
   const [storesLoading, setStoresLoading] = useState(true);
