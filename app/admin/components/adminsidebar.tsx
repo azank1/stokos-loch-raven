@@ -87,8 +87,8 @@ export default function AdminSidebar({ onClose }: { onClose: () => void }) {
           </span>
         </div>
 
-        <p className="text-sm font-black">Stoko&apos;s Loch Raven</p>
-        <p className="mt-1 text-xs text-white/55">Web ordering dashboard</p>
+        <p className="text-sm font-black">All Branches</p>
+        <p className="mt-1 text-xs text-white/55">Towson · York · Liberty</p>
       </div>
 
       <nav className="space-y-2">

@@ -79,6 +79,7 @@ export default function OrdersDashboard() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [storeFilter, setStoreFilter] = useState("all");
   const [activeOrder, setActiveOrder] = useState<AdminOrder | null>(null);
   const [notification, setNotification] = useState("");
   const [loading, setLoading] = useState(true);
@@ -91,6 +92,7 @@ export default function OrdersDashboard() {
     try {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
+      if (storeFilter !== "all") params.set("store", storeFilter);
       if (search.trim()) params.set("search", search.trim());
       params.set("page", pageNum.toString());
       params.set("limit", PAGE_SIZE.toString());
@@ -118,11 +120,11 @@ export default function OrdersDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, search, page]);
+  }, [statusFilter, storeFilter, search, page]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, search]);
+  }, [statusFilter, storeFilter, search]);
 
   useEffect(() => {
     loadOrders(page);
@@ -289,6 +291,20 @@ export default function OrdersDashboard() {
                 placeholder="Search orders..."
                 className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
               />
+            </div>
+
+            {/* Branch filter */}
+            <div className="mt-3">
+              <select
+                value={storeFilter}
+                onChange={(e) => setStoreFilter(e.target.value)}
+                className="w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm font-black text-zinc-700 outline-none focus:border-green-500"
+              >
+                <option value="all">All Branches</option>
+                <option value="towson">Towson</option>
+                <option value="york">Baltimore — York</option>
+                <option value="liberty">Liberty</option>
+              </select>
             </div>
 
             {/* Status filter */}
