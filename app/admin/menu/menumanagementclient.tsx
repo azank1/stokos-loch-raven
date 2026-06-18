@@ -46,13 +46,6 @@ export type StoreItem = {
 
 const DEFAULT_STORES: StoreItem[] = [
   {
-    _id: "towson",
-    id: "towson",
-    name: "Towson",
-    slug: "towson",
-    status: "Active",
-  },
-  {
     _id: "liberty",
     id: "liberty",
     name: "Liberty",
@@ -64,6 +57,13 @@ const DEFAULT_STORES: StoreItem[] = [
     id: "york",
     name: "York",
     slug: "york",
+    status: "Active",
+  },
+  {
+    _id: "towson",
+    id: "towson",
+    name: "Towson",
+    slug: "towson",
     status: "Active",
   },
 ];
@@ -94,7 +94,7 @@ export default function MenuManagementClient() {
   }, [stores]);
 
   const {
-    isLoaded = true,
+    isLoaded = false,
 
     products: crudProductsRaw,
     categories: crudCategoriesRaw,
@@ -218,6 +218,8 @@ export default function MenuManagementClient() {
   useEffect(() => {
     setSelectedCategory("All Categories");
   }, [selectedStoreFilter]);
+
+  const isInitialMenuLoading = !isLoaded || !hasSynced;
 
   const products = hasSynced ? uiProducts : crudProducts;
   const categories = hasSynced ? uiCategories : crudCategories;
@@ -687,48 +689,64 @@ export default function MenuManagementClient() {
         )}
 
         {activeTab === "products" && (
-    <ProductTable
-  products={filteredProducts}
-  categories={categories}
-  stores={stores}
-  upsellRules={upsellRules}
-  selectedStoreId={selectedStoreFilter}
-  onEdit={(product) => setModal({ type: "products", item: product })}
-  onDelete={(id) => handleDelete("products", id)} 
-  />
+          isInitialMenuLoading ? (
+            <AdminMenuLoadingState title="Loading products..." />
+          ) : (
+            <ProductTable
+              products={filteredProducts}
+              categories={categories}
+              stores={stores}
+              upsellRules={upsellRules}
+              selectedStoreId={selectedStoreFilter}
+              onEdit={(product) => setModal({ type: "products", item: product })}
+              onDelete={(id) => handleDelete("products", id)}
+            />
+          )
         )}
 
         {activeTab === "categories" && (
-          <CategoryTable
-            categories={visibleCategories}
-            products={visibleProducts}
-            stores={stores}
-            hideEdit={selectedStoreFilter === "all"}
-            onEdit={(category) =>
-              setModal({ type: "categories", item: category })
-            }
-            onDelete={(id) => handleDelete("categories", id)}
-          />
+          isInitialMenuLoading ? (
+            <AdminMenuLoadingState title="Loading categories..." />
+          ) : (
+            <CategoryTable
+              categories={visibleCategories}
+              products={visibleProducts}
+              stores={stores}
+              hideEdit={selectedStoreFilter === "all"}
+              onEdit={(category) =>
+                setModal({ type: "categories", item: category })
+              }
+              onDelete={(id) => handleDelete("categories", id)}
+            />
+          )
         )}
 
         {activeTab === "modifiers" && (
-          <ModifierGrid
-            modifierGroups={visibleModifierGroups}
-            stores={stores}
-            onEdit={(modifier) =>
-              setModal({ type: "modifiers", item: modifier })
-            }
-            onDelete={(id) => handleDelete("modifiers", id)}
-          />
+          isInitialMenuLoading ? (
+            <AdminMenuLoadingState title="Loading modifier groups..." />
+          ) : (
+            <ModifierGrid
+              modifierGroups={visibleModifierGroups}
+              stores={stores}
+              onEdit={(modifier) =>
+                setModal({ type: "modifiers", item: modifier })
+              }
+              onDelete={(id) => handleDelete("modifiers", id)}
+            />
+          )
         )}
 
         {activeTab === "upsells" && (
-    <UpsellTable
-  upsellRules={visibleUpsellRules}
-  stores={stores}
-  onEdit={(upsell) => setModal({ type: "upsells", item: upsell })}
-  onDelete={(id) => handleDelete("upsells", id)}
-/>
+          isInitialMenuLoading ? (
+            <AdminMenuLoadingState title="Loading upsells..." />
+          ) : (
+            <UpsellTable
+              upsellRules={visibleUpsellRules}
+              stores={stores}
+              onEdit={(upsell) => setModal({ type: "upsells", item: upsell })}
+              onDelete={(id) => handleDelete("upsells", id)}
+            />
+          )
         )}
       </section>
 
@@ -757,6 +775,41 @@ function getLabel(tab: TabType) {
   if (tab === "categories") return "Category";
   if (tab === "modifiers") return "Modifier Group";
   return "Upsell";
+}
+
+function AdminMenuLoadingState({ title }: { title: string }) {
+  return (
+    <div className="rounded-[24px] border border-zinc-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-lg font-black text-zinc-950">{title}</p>
+          <p className="mt-1 text-sm font-semibold text-zinc-500">
+            Please wait, menu data is loading.
+          </p>
+        </div>
+
+        <div className="h-9 w-24 animate-pulse rounded-full bg-zinc-100" />
+      </div>
+
+      <div className="space-y-3">
+        {[1, 2, 3, 4].map((row) => (
+          <div
+            key={row}
+            className="grid gap-4 rounded-2xl border border-zinc-100 p-4 md:grid-cols-[80px_1.5fr_1fr_1fr_1fr]"
+          >
+            <div className="h-12 w-14 animate-pulse rounded-xl bg-zinc-100" />
+            <div className="space-y-2">
+              <div className="h-4 w-48 animate-pulse rounded-full bg-zinc-100" />
+              <div className="h-3 w-28 animate-pulse rounded-full bg-zinc-100" />
+            </div>
+            <div className="h-4 w-24 animate-pulse rounded-full bg-zinc-100" />
+            <div className="h-4 w-28 animate-pulse rounded-full bg-zinc-100" />
+            <div className="h-8 w-20 animate-pulse rounded-full bg-zinc-100" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function slugifyStoreName(value: unknown) {
