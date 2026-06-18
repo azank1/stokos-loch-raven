@@ -12,6 +12,9 @@ export type StoreItem = {
   location: string;
   phone: string;
   openingHours: string;
+  deliveryFee?: number;
+  taxRate?: number;
+  minimumOrder?: number;
 };
 
 export default function StoresPage() {

@@ -17,6 +17,7 @@ import {
   Mail,
   CreditCard,
   PackageCheck,
+  PackageSearch,
 } from "lucide-react";
 import { useCartStore } from "../usecartstore";
 import { STORES } from "@/lib/data/stores";
@@ -42,32 +43,7 @@ type FullOrderItem = {
   note?: string;
 };
 
-const saveOrderForAdmin = (order: any) => {
-  const key = "stokos_admin_orders";
-
-  try {
-    const saved = localStorage.getItem(key);
-    const existing = saved ? JSON.parse(saved) : [];
-
-    const alreadyExists = existing.some((item: any) => item.id === order.id);
-    const withoutDuplicate = existing.filter((item: any) => item.id !== order.id);
-    const updated = [order, ...withoutDuplicate].slice(0, 100);
-
-    localStorage.setItem(key, JSON.stringify(updated));
-    window.dispatchEvent(new Event("stokos-admin-orders-updated"));
-
-    if (!alreadyExists && typeof BroadcastChannel !== "undefined") {
-      const channel = new BroadcastChannel("stokos-orders");
-      channel.postMessage({
-        type: "ORDER_CREATED",
-        order,
-      });
-      channel.close();
-    }
-  } catch (error) {
-    console.error("Failed to save admin order:", error);
-  }
-};
+// Orders are now persisted to MongoDB — no localStorage needed
 
 const getCartSnapshotFromStorage = () => {
   const keys = ["stokos-cart", "cart-storage", "cart"];
@@ -92,18 +68,6 @@ const getCartSnapshotFromStorage = () => {
   return [];
 };
 
-const getSavedAdminOrder = (sessionId: string | null) => {
-  if (!sessionId) return null;
-
-  try {
-    const saved = localStorage.getItem("stokos_admin_orders");
-    const existing = saved ? JSON.parse(saved) : [];
-
-    return existing.find((order: any) => order.id === sessionId) || null;
-  } catch {
-    return null;
-  }
-};
 
 const buildFullItems = (
   stripeItems: StripeItem[],
@@ -202,11 +166,7 @@ export default function SuccessPage() {
 
     cartSnapshotRef.current = cartSnapshot;
 
-    const savedAdminOrder = getSavedAdminOrder(sessionId);
-
-    if (savedAdminOrder?.items?.length > 0) {
-      setItems(savedAdminOrder.items);
-    } else if (cartSnapshot.length > 0) {
+    if (cartSnapshot.length > 0) {
       setItems(buildFullItems([], cartSnapshot, "USD"));
     }
 
@@ -226,7 +186,9 @@ export default function SuccessPage() {
           return;
         }
 
-        const finalOrderNumber = `STK-${data.id.slice(-6).toUpperCase()}`;
+        const finalOrderNumber =
+          data.metadata?.orderNumber ||
+          `STK-${data.id.slice(-6).toUpperCase()}`;
         const finalOrderType = data.metadata?.orderType || savedOrderType;
         const finalAddress = data.metadata?.deliveryAddress || savedAddress;
         const finalDay = data.metadata?.orderDay || savedDay;
@@ -234,16 +196,13 @@ export default function SuccessPage() {
         const finalStore =
           data.metadata?.orderStore || data.metadata?.store || savedStore;
 
-        const storeData =
-          STORES.find((store) => store.slug === finalStore) ||
-          STORES.find((store) => store.slug === slug);
-
         const finalCurrency = data.currency || "USD";
         const finalStripeItems = data.items || [];
-        const finalFullItems =
-          savedAdminOrder?.items?.length > 0
-            ? savedAdminOrder.items
-            : buildFullItems(finalStripeItems, cartSnapshot, finalCurrency);
+        const finalFullItems = buildFullItems(
+          finalStripeItems,
+          cartSnapshot,
+          finalCurrency
+        );
 
         setOrderNumber(finalOrderNumber);
         setCustomerName(data.customerName || "Not provided");
@@ -258,25 +217,6 @@ export default function SuccessPage() {
         setOrderDay(finalDay);
         setOrderTime(finalTime);
         setOrderStoreSlug(finalStore);
-
-        saveOrderForAdmin({
-          id: data.id,
-          orderNumber: finalOrderNumber,
-          createdAt: new Date().toISOString(),
-          store: storeData?.name || finalStore,
-          storeSlug: finalStore,
-          orderType: finalOrderType,
-          deliveryAddress: finalAddress,
-          orderDay: finalDay,
-          orderTime: finalTime,
-          customerName: data.customerName || "Not provided",
-          customerEmail: data.customerEmail || "Not provided",
-          paymentStatus: data.paymentStatus || "paid",
-          amountTotal: data.amountTotal || 0,
-          currency: finalCurrency,
-          paymentMethod: "Card via Stripe",
-          items: finalFullItems,
-        });
       } catch (error) {
         console.error("Failed to load Stripe session:", error);
       } finally {
@@ -600,6 +540,14 @@ export default function SuccessPage() {
               >
                 <Home size={18} />
                 Back to Menu
+              </Link>
+
+              <Link
+                href={`/track?orderNumber=${orderNumber}`}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-5 text-sm font-black uppercase transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-black dark:hover:bg-zinc-900"
+              >
+                <PackageSearch size={18} />
+                Track Order
               </Link>
 
               <Link

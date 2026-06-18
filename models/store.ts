@@ -42,6 +42,21 @@ const StoreSchema = new Schema(
       index: true,
     },
 
+    deliveryFee: {
+      type: Number,
+      default: 0,
+    },
+
+    taxRate: {
+      type: Number,
+      default: 0,
+    },
+
+    minimumOrder: {
+      type: Number,
+      default: 0,
+    },
+
     sortOrder: {
       type: Number,
       default: 0,

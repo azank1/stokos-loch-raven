@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CheckCircle2,
   CreditCard,
@@ -15,6 +15,12 @@ import {
   Utensils,
   X,
 } from "lucide-react";
+import {
+  getNextStatuses,
+  STATUS_COLORS,
+  type OrderStatus,
+  type OrderType,
+} from "@/lib/orderstatus";
 
 type AdminOrderItem = {
   name?: string;
@@ -32,10 +38,10 @@ type AdminOrderItem = {
 };
 
 type AdminOrder = {
-  id: string;
+  _id: string;
   orderNumber: string;
   createdAt: string;
-  store: string;
+  storeName: string;
   storeSlug?: string;
   orderType: "pickup" | "delivery" | string;
   deliveryAddress?: string;
@@ -45,92 +51,89 @@ type AdminOrder = {
   customerEmail?: string;
   paymentStatus?: string;
   amountTotal: number;
+  subtotal?: number;
+  deliveryFee?: number;
+  tax?: number;
   currency?: string;
   paymentMethod?: string;
+  status: string;
+  statusHistory?: { status: string; at: string }[];
   items: AdminOrderItem[];
 };
 
-const STORAGE_KEY = "stokos_admin_orders";
+const ALL_STATUSES = [
+  "all",
+  "Placed",
+  "Confirmed",
+  "Preparing",
+  "Ready for Pickup",
+  "Out for Delivery",
+  "Delivered",
+  "Completed",
+  "Cancelled",
+] as const;
 
 export default function OrdersDashboard() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [activeOrder, setActiveOrder] = useState<AdminOrder | null>(null);
   const [notification, setNotification] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [advancing, setAdvancing] = useState(false);
 
-  const loadOrders = () => {
+  const loadOrders = useCallback(async () => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      const parsed: AdminOrder[] = saved ? JSON.parse(saved) : [];
+      const params = new URLSearchParams();
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (search.trim()) params.set("search", search.trim());
 
-      setOrders(parsed);
+      const res = await fetch(`/api/admin/orders?${params}`);
+      const data = await res.json();
 
-      setActiveOrder((current) => {
-        if (current) {
-          return parsed.find((order) => order.id === current.id) || parsed[0] || null;
-        }
-
-        return parsed[0] || null;
-      });
+      if (data.success) {
+        setOrders(data.orders);
+        setActiveOrder((current) => {
+          if (current) {
+            return (
+              data.orders.find((o: AdminOrder) => o._id === current._id) ||
+              data.orders[0] ||
+              null
+            );
+          }
+          return data.orders[0] || null;
+        });
+      }
     } catch (error) {
-      console.error("Failed to load admin orders:", error);
-      setOrders([]);
-      setActiveOrder(null);
+      console.error("Failed to load orders:", error);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [statusFilter, search]);
 
   useEffect(() => {
     loadOrders();
-
-    let channel: BroadcastChannel | null = null;
-
-    if (typeof BroadcastChannel !== "undefined") {
-      channel = new BroadcastChannel("stokos-orders");
-
-      channel.onmessage = (event) => {
-        if (event.data?.type === "ORDER_CREATED") {
-          loadOrders();
-          setNotification(`New order received: ${event.data.order.orderNumber}`);
-        }
-      };
-    }
-
-    const handleStorage = () => loadOrders();
-
-    window.addEventListener("storage", handleStorage);
-    window.addEventListener("stokos-admin-orders-updated", loadOrders);
-
-    return () => {
-      channel?.close();
-      window.removeEventListener("storage", handleStorage);
-      window.removeEventListener("stokos-admin-orders-updated", loadOrders);
-    };
-  }, []);
+    const interval = setInterval(loadOrders, 15000);
+    return () => clearInterval(interval);
+  }, [loadOrders]);
 
   useEffect(() => {
     if (!notification) return;
-
-    const timer = setTimeout(() => {
-      setNotification("");
-    }, 4500);
-
+    const timer = setTimeout(() => setNotification(""), 4500);
     return () => clearTimeout(timer);
   }, [notification]);
 
   const filteredOrders = useMemo(() => {
     const value = search.toLowerCase().trim();
-
     if (!value) return orders;
-
-    return orders.filter((order) => {
-      return (
+    return orders.filter(
+      (order) =>
         safeText(order.orderNumber).includes(value) ||
         safeText(order.customerName).includes(value) ||
         safeText(order.customerEmail).includes(value) ||
-        safeText(order.store).includes(value) ||
+        safeText(order.storeName).includes(value) ||
         safeText(order.orderType).includes(value)
-      );
-    });
+    );
   }, [orders, search]);
 
   const totalRevenue = orders.reduce(
@@ -139,22 +142,50 @@ export default function OrdersDashboard() {
   );
 
   const pickupOrders = orders.filter(
-    (order) => order.orderType?.toLowerCase() === "pickup"
+    (o) => o.orderType?.toLowerCase() === "pickup"
   ).length;
 
   const deliveryOrders = orders.filter(
-    (order) => order.orderType?.toLowerCase() === "delivery"
+    (o) => o.orderType?.toLowerCase() === "delivery"
   ).length;
 
-  const clearDemoOrders = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setOrders([]);
-    setActiveOrder(null);
+  const handleAdvanceStatus = async (newStatus: OrderStatus) => {
+    if (!activeOrder || advancing) return;
+
+    setAdvancing(true);
+
+    try {
+      const res = await fetch(`/api/admin/orders/${activeOrder._id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setNotification(`Order ${activeOrder.orderNumber} → ${newStatus}`);
+        await loadOrders();
+      } else {
+        alert(data.message || "Failed to update status.");
+      }
+    } catch {
+      alert("Something went wrong.");
+    } finally {
+      setAdvancing(false);
+    }
   };
+
+  const nextStatuses = activeOrder
+    ? getNextStatuses(
+        activeOrder.status as OrderStatus,
+        activeOrder.orderType as OrderType
+      )
+    : [];
 
   return (
     <div className="w-full">
-      <section className="mb-5 overflow-hidden rounded-[30px] bg-[#146C38] p-6 text-white  md:p-8">
+      <section className="mb-5 overflow-hidden rounded-[30px] bg-[#146C38] p-6 text-white md:p-8">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <div className="mb-4 flex w-fit items-center gap-2 rounded-full bg-white/10 px-4 py-2">
@@ -169,13 +200,20 @@ export default function OrdersDashboard() {
             </h2>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/75 md:text-base">
-              Manage orders, delivery, payments, and customer details from one clean dashboard.
+              Manage orders, delivery, payments, and customer details from one
+              clean dashboard.
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:min-w-[360px]">
-            <MiniHeroCard label="Today Orders" value={orders.length.toString()} />
-            <MiniHeroCard label="Revenue" value={formatMoney("USD", totalRevenue)} />
+            <MiniHeroCard
+              label="Total Orders"
+              value={orders.length.toString()}
+            />
+            <MiniHeroCard
+              label="Revenue"
+              value={formatMoney("USD", totalRevenue)}
+            />
           </div>
         </div>
       </section>
@@ -220,22 +258,23 @@ export default function OrdersDashboard() {
       </section>
 
       <section className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+        {/* Order list */}
         <div className="overflow-hidden rounded-[30px] border border-zinc-200 bg-white shadow-sm">
           <div className="border-b border-zinc-200 p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-xl font-black uppercase">Orders</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Recent customer orders
+                  {loading ? "Loading..." : `${filteredOrders.length} order${filteredOrders.length !== 1 ? "s" : ""}`}
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={clearDemoOrders}
+                onClick={loadOrders}
                 className="rounded-full bg-zinc-100 px-4 py-2 text-xs font-black uppercase text-zinc-600 hover:bg-zinc-200"
               >
-                Clear
+                Refresh
               </button>
             </div>
 
@@ -249,10 +288,32 @@ export default function OrdersDashboard() {
                 className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
               />
             </div>
+
+            {/* Status filter */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {ALL_STATUSES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatusFilter(s)}
+                  className={`rounded-full px-3 py-1 text-[10px] font-black uppercase transition ${
+                    statusFilter === s
+                      ? "bg-[#0F3F24] text-white"
+                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                  }`}
+                >
+                  {s === "all" ? "All" : s}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="max-h-[760px] space-y-3 overflow-y-auto p-4">
-            {filteredOrders.length === 0 ? (
+            {loading ? (
+              <div className="flex h-48 items-center justify-center text-zinc-400">
+                <p className="font-bold">Loading orders...</p>
+              </div>
+            ) : filteredOrders.length === 0 ? (
               <div className="flex h-72 flex-col items-center justify-center text-center text-zinc-400">
                 <PackageCheck size={46} className="mb-4 opacity-30" />
                 <p className="font-bold">No orders yet</p>
@@ -260,11 +321,11 @@ export default function OrdersDashboard() {
               </div>
             ) : (
               filteredOrders.map((order) => {
-                const isActive = activeOrder?.id === order.id;
+                const isActive = activeOrder?._id === order._id;
 
                 return (
                   <button
-                    key={order.id}
+                    key={order._id}
                     type="button"
                     onClick={() => setActiveOrder(order)}
                     className={`w-full rounded-3xl border p-4 text-left transition ${
@@ -275,16 +336,23 @@ export default function OrdersDashboard() {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-black">
-                          {order.orderNumber}
-                        </p>
-
+                        <p className="text-sm font-black">{order.orderNumber}</p>
                         <p className="mt-1 text-xs text-zinc-500">
                           {formatDate(order.createdAt)}
                         </p>
                       </div>
 
-                      <OrderTypeBadge type={order.orderType} />
+                      <div className="flex flex-col items-end gap-1.5">
+                        <OrderTypeBadge type={order.orderType} />
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+                            STATUS_COLORS[order.status as OrderStatus] ||
+                            "bg-zinc-100 text-zinc-600"
+                          }`}
+                        >
+                          {order.status}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="mt-4 flex items-center justify-between gap-3">
@@ -294,7 +362,7 @@ export default function OrdersDashboard() {
                         </p>
 
                         <p className="truncate text-xs text-zinc-500">
-                          {order.store || "Store"}
+                          {order.storeName || "Store"}
                         </p>
                       </div>
 
@@ -309,6 +377,7 @@ export default function OrdersDashboard() {
           </div>
         </div>
 
+        {/* Order detail */}
         <div className="overflow-hidden rounded-[30px] border border-zinc-200 bg-white shadow-sm">
           {!activeOrder ? (
             <div className="flex min-h-[640px] flex-col items-center justify-center text-center text-zinc-400">
@@ -336,23 +405,53 @@ export default function OrdersDashboard() {
                   <div className="flex flex-wrap gap-3">
                     <div className="rounded-2xl bg-green-50 px-5 py-3 text-green-800">
                       <p className="text-xs font-black uppercase">Payment</p>
-
                       <p className="text-sm font-black">
                         {activeOrder.paymentStatus === "paid"
                           ? "Paid Successfully"
-                          : activeOrder.paymentStatus || "Not Available"}
+                          : activeOrder.paymentStatus || "Pending"}
                       </p>
+                    </div>
+
+                    <div
+                      className={`rounded-2xl px-5 py-3 ${STATUS_COLORS[activeOrder.status as OrderStatus] || "bg-zinc-100 text-zinc-800"}`}
+                    >
+                      <p className="text-xs font-black uppercase">Status</p>
+                      <p className="text-sm font-black">{activeOrder.status}</p>
                     </div>
 
                     <div className="rounded-2xl bg-zinc-100 px-5 py-3 text-zinc-800">
                       <p className="text-xs font-black uppercase">Total</p>
-
                       <p className="text-sm font-black">
                         {formatMoney(activeOrder.currency, activeOrder.amountTotal)}
                       </p>
                     </div>
                   </div>
                 </div>
+
+                {/* Status advance controls */}
+                {nextStatuses.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <p className="w-full text-xs font-black uppercase text-zinc-400">
+                      Advance status:
+                    </p>
+
+                    {nextStatuses.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={advancing}
+                        onClick={() => handleAdvanceStatus(s)}
+                        className={`rounded-full px-4 py-2 text-xs font-black uppercase transition disabled:opacity-60 ${
+                          s === "Cancelled"
+                            ? "bg-red-50 text-red-700 hover:bg-red-100"
+                            : "bg-[#0F3F24] text-white hover:bg-[#146C38]"
+                        }`}
+                      >
+                        {advancing ? "..." : `→ ${s}`}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-4 p-6 md:grid-cols-2">
@@ -384,9 +483,7 @@ export default function OrdersDashboard() {
                       ? "Delivery"
                       : "Pickup / Carryout"
                   }
-                  sub={`${activeOrder.orderDay || "Today"} · ${
-                    activeOrder.orderTime || "ASAP"
-                  }`}
+                  sub={`${activeOrder.orderDay || "Today"} · ${activeOrder.orderTime || "ASAP"}`}
                 />
 
                 <DetailCard
@@ -399,11 +496,60 @@ export default function OrdersDashboard() {
                   main={
                     activeOrder.orderType?.toLowerCase() === "delivery"
                       ? activeOrder.deliveryAddress || "Not provided"
-                      : activeOrder.store || "Store"
+                      : activeOrder.storeName || "Store"
                   }
                   sub="Store / order location"
                 />
               </div>
+
+              {/* Money breakdown */}
+              {(activeOrder.subtotal !== undefined ||
+                activeOrder.deliveryFee ||
+                activeOrder.tax) && (
+                <div className="px-6 pb-4">
+                  <div className="rounded-3xl border border-zinc-200 p-4">
+                    <p className="mb-3 text-xs font-black uppercase text-zinc-500">
+                      Order Totals
+                    </p>
+
+                    <div className="space-y-2 text-sm">
+                      {activeOrder.subtotal !== undefined && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">Subtotal</span>
+                          <span className="font-bold">
+                            {formatMoney(activeOrder.currency, activeOrder.subtotal)}
+                          </span>
+                        </div>
+                      )}
+
+                      {(activeOrder.deliveryFee ?? 0) > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">Delivery Fee</span>
+                          <span className="font-bold">
+                            {formatMoney(activeOrder.currency, activeOrder.deliveryFee)}
+                          </span>
+                        </div>
+                      )}
+
+                      {(activeOrder.tax ?? 0) > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">Tax</span>
+                          <span className="font-bold">
+                            {formatMoney(activeOrder.currency, activeOrder.tax)}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between border-t border-zinc-200 pt-2">
+                        <span className="font-black">Total</span>
+                        <span className="font-black text-green-800">
+                          {formatMoney(activeOrder.currency, activeOrder.amountTotal)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="px-6 pb-6">
                 <div className="rounded-3xl border border-zinc-200">
@@ -427,14 +573,11 @@ export default function OrdersDashboard() {
                     {activeOrder.items?.length ? (
                       activeOrder.items.map((item, index) => {
                         const itemName = item.name || item.title || "Menu Item";
-
                         const hasToppings =
-                          item.toppings && Object.keys(item.toppings).length > 0;
-
+                          item.toppings &&
+                          Object.keys(item.toppings).length > 0;
                         const hasSauces = item.sauces && item.sauces.length > 0;
-
                         const hasNote = item.note && item.note.trim().length > 0;
-
                         const hasDetails =
                           item.size?.label || hasToppings || hasSauces || hasNote;
 
@@ -594,9 +737,7 @@ function OrderTypeBadge({ type }: { type: string }) {
   return (
     <span
       className={`rounded-full px-3 py-1 text-[10px] font-black uppercase ${
-        isDelivery
-          ? "bg-orange-100 text-orange-700"
-          : "bg-green-800 text-white"
+        isDelivery ? "bg-orange-100 text-orange-700" : "bg-green-800 text-white"
       }`}
     >
       {isDelivery ? "Delivery" : "Pickup"}
@@ -608,27 +749,24 @@ function safeText(value: unknown) {
   return String(value || "").toLowerCase();
 }
 
-function formatMoney(currency: string | undefined, amount: number | undefined) {
+function formatMoney(
+  currency: string | undefined,
+  amount: number | undefined
+) {
   const code = currency?.toUpperCase() || "USD";
   const value = Number(amount || 0).toFixed(2);
-
   if (code === "USD") return `$${value}`;
-
   return `${code} ${value}`;
 }
 
 function formatDate(value: string) {
   if (!value) return "Not available";
-
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) return "Not available";
-
   return date.toLocaleString();
 }
 
 function formatSide(value: string) {
   if (!value) return "Whole";
-
   return value.charAt(0).toUpperCase() + value.slice(1);
 }

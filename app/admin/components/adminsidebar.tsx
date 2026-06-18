@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useClerk } from "@clerk/nextjs";
 import {
   ChevronRight,
   ClipboardList,
@@ -50,6 +51,7 @@ const navItems: SidebarItem[] = [
 
 export default function AdminSidebar({ onClose }: { onClose: () => void }) {
   const pathname = usePathname();
+  const { signOut } = useClerk();
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -138,6 +140,7 @@ export default function AdminSidebar({ onClose }: { onClose: () => void }) {
       <div className="mt-auto">
         <button
           type="button"
+          onClick={() => signOut({ redirectUrl: "/admin/sign-in" })}
           className="flex w-full items-center gap-3 rounded-3xl p-3 text-left text-white/70 transition hover:bg-red-500/10 hover:text-white"
         >
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10">

@@ -8,6 +8,9 @@ type StoreFormState = {
   location: string;
   phone: string;
   openingHours: string;
+  deliveryFee: string;
+  taxRate: string;
+  minimumOrder: string;
 };
 
 const emptyForm: StoreFormState = {
@@ -15,6 +18,9 @@ const emptyForm: StoreFormState = {
   location: "",
   phone: "",
   openingHours: "",
+  deliveryFee: "",
+  taxRate: "",
+  minimumOrder: "",
 };
 
 const createSlug = (value: string) => {
@@ -45,6 +51,9 @@ export default function StoreForm({
         location: editingStore.location,
         phone: editingStore.phone,
         openingHours: editingStore.openingHours,
+        deliveryFee: String(editingStore.deliveryFee ?? ""),
+        taxRate: String(editingStore.taxRate ?? ""),
+        minimumOrder: String(editingStore.minimumOrder ?? ""),
       });
     } else {
       setForm(emptyForm);
@@ -94,6 +103,9 @@ export default function StoreForm({
           location: form.location,
           phone: form.phone,
           openingHours: form.openingHours,
+          deliveryFee: form.deliveryFee !== "" ? parseFloat(form.deliveryFee) : 0,
+          taxRate: form.taxRate !== "" ? parseFloat(form.taxRate) : 0,
+          minimumOrder: form.minimumOrder !== "" ? parseFloat(form.minimumOrder) : 0,
         }),
       });
 
@@ -188,6 +200,53 @@ export default function StoreForm({
             rows={4}
             className="w-full resize-none rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327]"
           />
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="mb-1.5 block text-sm font-bold text-zinc-700">
+              Delivery Fee ($)
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.deliveryFee}
+              onChange={(e) => updateField("deliveryFee", e.target.value)}
+              placeholder="3.99"
+              className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327]"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-bold text-zinc-700">
+              Tax Rate (%)
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.taxRate}
+              onChange={(e) => updateField("taxRate", e.target.value)}
+              placeholder="6.00"
+              className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327]"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-sm font-bold text-zinc-700">
+              Min. Order ($)
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.minimumOrder}
+              onChange={(e) => updateField("minimumOrder", e.target.value)}
+              placeholder="10.00"
+              className="w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327]"
+            />
+          </div>
         </div>
 
         <button

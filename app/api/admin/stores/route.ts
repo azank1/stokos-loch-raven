@@ -11,6 +11,9 @@ type StoreBody = {
   location?: string;
   phone?: string;
   openingHours?: string;
+  deliveryFee?: number;
+  taxRate?: number;
+  minimumOrder?: number;
 };
 
 const createSlug = (value: string) => {
@@ -88,6 +91,9 @@ export async function POST(req: Request) {
       location,
       phone,
       openingHours,
+      deliveryFee: Number(body.deliveryFee ?? 0),
+      taxRate: Number(body.taxRate ?? 0),
+      minimumOrder: Number(body.minimumOrder ?? 0),
       status: "Active",
       sortOrder: 0,
     });
