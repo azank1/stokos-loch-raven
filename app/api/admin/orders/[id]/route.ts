@@ -7,6 +7,7 @@ import {
   type OrderStatus,
   type OrderType,
 } from "@/lib/orderstatus";
+import { awardLoyaltyPoints } from "@/lib/loyalty";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +64,21 @@ export async function PATCH(
 
     order.status = status;
     order.statusHistory.push({ status, at: new Date() });
+
+    if (
+      status === "Completed" &&
+      order.clerkUserId &&
+      !order.loyaltyPointsEarned
+    ) {
+      const result = await awardLoyaltyPoints(
+        order.clerkUserId,
+        Number(order.amountTotal || 0)
+      );
+      if (result) {
+        order.loyaltyPointsEarned = result.earned;
+      }
+    }
+
     await order.save();
 
     return NextResponse.json({

@@ -6,7 +6,7 @@ Here's the full handoff report. You can copy this directly to share with the dev
 
 **Repo:** `github.com/azank1/stokos-loch-raven`
 **Stack:** Next.js 16.2.4 (App Router) · React 19 · MongoDB/Mongoose · Stripe · Clerk · Zustand · Tailwind CSS
-**Deployment:** Vercel (auto-deploys from `main`)
+**Deployment:** Vercel **Bayent Labs** team — auto-deploys from `azank1/stokos-loch-raven` `main`
 
 ---
 
@@ -165,10 +165,14 @@ Once the developer completes P0:
 
 ---
 
-**Repo:** `github.com/azank1/stokos-loch-raven`
-**Branch:** `main` (Vercel auto-deploys)
-**Admin URL:** `https://[your-vercel-domain]/admin/sign-in`
+**Repo:** `github.com/azank1/stokos-loch-raven`  
+**Vercel:** **Bayent Labs** team (`bayentlabs`), connected to `azank1/stokos-loch-raven` (`main` auto-deploys)  
+**Deployment URL:** `https://stokos-loch-raven-git-main-bayentlabs.vercel.app`  
+**Team alias:** `https://stokos-loch-raven-bayentlabs.vercel.app` (assign as Production domain in Vercel if preferred)  
+**Legacy URL:** `https://stokos-loch-raven.vercel.app` — separate/old project; not the active Bayent Labs deploy
 **Staff Login entry point:** Footer of any page → "Staff Login"
+
+**Note:** Bayent Labs deployments currently return **401** to unauthenticated requests (Vercel Deployment Protection). For public QA and Stripe webhooks, either disable protection on **Production** or use a production domain with protection off.
 
 ---
 
@@ -182,7 +186,7 @@ Once the developer completes P0:
 | **Abassi** | MongoDB Atlas prod, Stripe Connect Express, webhooks, live payment keys |
 | **Stokos** | Stripe bank onboarding link, staff emails, optional domain purchase |
 
-**Deploy repo for Vercel:** `github.com/zaygitup/stokos-loch-raven` — push `main` after changes on `azank1/stokos-loch-raven`.
+**Deploy repo for Vercel:** `github.com/azank1/stokos-loch-raven` — push to `main` on origin; Vercel auto-deploys from the **azank1** Vercel project (not zaygitup).
 
 ### Phase documents
 

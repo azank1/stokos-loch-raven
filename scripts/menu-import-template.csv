@@ -1,0 +1,4 @@
+storeSlug,categoryName,productName,price,description,imageUrl,status
+towson,Pizzas,Cheese Pizza,10.99,Classic cheese pizza,,Active
+towson,Pizzas,Pepperoni Pizza,12.99,,,Active
+towson,Subs,Steak & Cheese,9.99,,,Active

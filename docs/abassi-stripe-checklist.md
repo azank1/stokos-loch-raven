@@ -27,8 +27,8 @@ Generate onboarding link:
 ```bash
 stripe account_links create \
   --account acct_xxx \
-  --refresh-url https://stokos-loch-raven.vercel.app/admin \
-  --return-url https://stokos-loch-raven.vercel.app/admin \
+  --refresh-url https://stokos-loch-raven-git-main-bayentlabs.vercel.app/admin \
+  --return-url https://stokos-loch-raven-git-main-bayentlabs.vercel.app/admin \
   --type account_onboarding
 ```
 

@@ -162,6 +162,10 @@ export default function MainFooter() {
               Contact
             </a>
 
+            <Link href="/track" className="transition hover:text-white">
+              Track Order
+            </Link>
+
             <Link href="/admin/sign-in" className="transition hover:text-white/50 text-white/30 text-xs">
               Staff Login
             </Link>

@@ -125,6 +125,12 @@ export default function Footer({ store }: FooterProps) {
                   Contact Us
                 </Link>
               </li>
+
+              <li>
+                <Link href="/track" className="hover:text-white">
+                  Track Order
+                </Link>
+              </li>
             </ul>
           </div>
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   Show,
   SignInButton,
@@ -39,6 +40,16 @@ export default function ClerkAuthControls({
         </SignUpButton>
       </Show>
       <Show when="signed-in">
+        <Link
+          href="/account"
+          className={
+            variant === "admin"
+              ? "rounded-full border border-green-200 bg-white px-4 py-2 text-xs font-black uppercase text-green-800"
+              : "rounded-full border border-white/30 bg-white/15 px-4 py-2 text-xs font-black uppercase text-white"
+          }
+        >
+          Account
+        </Link>
         <UserButton
           appearance={{
             elements: {

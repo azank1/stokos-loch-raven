@@ -18,97 +18,6 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 
-const upsellByCategory: Record<string, CartItem[]> = {
-  pizzas: [
-    {
-      cartId: "upsell-coke-2l",
-      id: "upsell-coke-2l",
-      category: "upsell",
-      title: "Coke 2L",
-      price: 3.5,
-      quantity: 1,
-      image:
-        "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?q=80&w=600&auto=format&fit=crop",
-    },
-    {
-      cartId: "upsell-wings",
-      id: "upsell-wings",
-      category: "upsell",
-      title: "Buffalo Wings",
-      price: 8.99,
-      quantity: 1,
-      image:
-        "https://images.unsplash.com/photo-1527477396000-e27163b481c2?q=80&w=600&auto=format&fit=crop",
-    },
-    {
-      cartId: "upsell-fries-pizza",
-      id: "upsell-fries-pizza",
-      category: "upsell",
-      title: "French Fries",
-      price: 4.99,
-      quantity: 1,
-      image:
-        "https://images.unsplash.com/photo-1576107232684-1279f390859f?q=80&w=600&auto=format&fit=crop",
-    },
-    {
-      cartId: "upsell-garlic-knots",
-      id: "upsell-garlic-knots",
-      category: "upsell",
-      title: "Garlic Knots",
-      price: 5.99,
-      quantity: 1,
-      image:
-        "https://www.savingdessert.com/wp-content/uploads/2022/02/Garlic-Knots-8.jpg",
-    },
-  ],
-
-  breakfast: [
-    {
-      cartId: "upsell-coffee",
-      id: "upsell-coffee",
-      category: "upsell",
-      title: "Hot Coffee",
-      price: 2.49,
-      quantity: 1,
-      image:
-        "https://images.unsplash.com/photo-1509042239860-f550ce710b93?q=80&w=600&auto=format&fit=crop",
-    },
-    {
-      cartId: "upsell-hash-browns",
-      id: "upsell-hash-browns",
-      category: "upsell",
-      title: "Hash Browns",
-      price: 3.99,
-      quantity: 1,
-      image:
-        "https://seasonandthyme.com/wp-content/uploads/2022/01/frozen-hash-browns-air-fryer-2.jpeg",
-    },
-  ],
-
-  trending: [
-    {
-      cartId: "upsell-fries-trending",
-      id: "upsell-fries-trending",
-      category: "upsell",
-      title: "French Fries",
-      price: 4.99,
-      quantity: 1,
-      image:
-        "https://images.unsplash.com/photo-1576107232684-1279f390859f?q=80&w=600&auto=format&fit=crop",
-    },
-    {
-      cartId: "upsell-coke-can",
-      id: "upsell-coke-can",
-      category: "upsell",
-      title: "Coke Can",
-      price: 1.99,
-      quantity: 1,
-      image:
-        "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?q=80&w=600&auto=format&fit=crop",
-    },
-  ],
-};
-
 type StoreConfig = {
   deliveryFee: number;
   taxRate: number;
@@ -126,6 +35,10 @@ export default function CartSidebar() {
 
   const [loading, setLoading] = useState(false);
   const [storeConfig, setStoreConfig] = useState<StoreConfig | null>(null);
+  const [dynamicUpsells, setDynamicUpsells] = useState<CartItem[]>([]);
+  const [promoCode, setPromoCode] = useState("");
+  const [promoDiscount, setPromoDiscount] = useState(0);
+  const [promoMessage, setPromoMessage] = useState("");
 
   const [orderType, setOrderType] = useState<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState<string | null>(null);
@@ -135,6 +48,38 @@ export default function CartSidebar() {
 
   const { cart, isCartOpen, toggleCart, closeCart, removeItem, addItem } =
     useCartStore();
+
+  const mainCartItems = cart.filter((item) => item.category !== "upsell");
+
+  useEffect(() => {
+    if (!slug || mainCartItems.length === 0) {
+      setDynamicUpsells([]);
+      return;
+    }
+
+    const categoryKeys = Array.from(
+      new Set(
+        mainCartItems
+          .flatMap((item) => [item.categoryId, item.category])
+          .filter(Boolean) as string[]
+      )
+    );
+
+    fetch(`/api/store/${slug}/upsells`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categoryIds: categoryKeys }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && Array.isArray(d.upsells)) {
+          setDynamicUpsells(d.upsells);
+        } else {
+          setDynamicUpsells([]);
+        }
+      })
+      .catch(() => setDynamicUpsells([]));
+  }, [slug, mainCartItems.length, JSON.stringify(mainCartItems.map((i) => i.categoryId || i.category))]);
 
   useEffect(() => {
     setMounted(true);
@@ -208,23 +153,38 @@ export default function CartSidebar() {
   const isDelivery = orderType === "delivery";
   const deliveryFee = isDelivery ? (storeConfig?.deliveryFee ?? 0) : 0;
   const taxAmount = storeConfig ? subtotal * (storeConfig.taxRate / 100) : 0;
-  const estimatedTotal = subtotal + deliveryFee + taxAmount;
+  const estimatedTotal = Math.max(
+    0,
+    subtotal + deliveryFee + taxAmount - promoDiscount
+  );
 
-  const mainCartItems = cart.filter((item) => item.category !== "upsell");
+  const availableUpsells = dynamicUpsells.filter(
+    (upsell) => !cart.some((cartItem) => cartItem.cartId === upsell.cartId)
+  );
 
-  const upsellSections = mainCartItems
-    .map((mainItem, index) => {
-      const items = (upsellByCategory[mainItem.category || ""] || []).filter(
-        (upsell) => !cart.some((cartItem) => cartItem.cartId === upsell.cartId)
-      );
+  const applyPromoCode = async () => {
+    if (!promoCode.trim()) return;
 
-      return {
-        key: `${mainItem.cartId}-${index}`,
-        title: mainItem.title,
-        items,
-      };
-    })
-    .filter((section) => section.items.length > 0);
+    try {
+      const res = await fetch("/api/promo/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: promoCode.trim(), subtotal }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setPromoDiscount(0);
+        setPromoMessage(data.message || "Invalid promo code");
+        return;
+      }
+
+      setPromoDiscount(Number(data.discountAmount || 0));
+      setPromoMessage(data.message || "Promo applied");
+    } catch {
+      setPromoMessage("Could not validate promo code");
+    }
+  };
 
   const handleStripeCheckout = async () => {
     if (cart.length === 0 || loading) return;
@@ -255,6 +215,7 @@ export default function CartSidebar() {
           orderDay: orderDay || "Today",
           orderTime: orderTime || "ASAP",
           orderStore: orderStore.slug,
+          promoCode: promoCode.trim() || undefined,
         }),
       });
 
@@ -474,57 +435,78 @@ export default function CartSidebar() {
               ))
             )}
 
-            {cart.length > 0 && upsellSections.length > 0 && (
-              <div className="mt-8 space-y-6">
-                {upsellSections.map((section) => (
-                  <div key={section.key}>
-                    <h3 className="mb-3 text-xs font-black uppercase text-zinc-400">
-                      Complete your meal with {section.title}
-                    </h3>
+            {cart.length > 0 && availableUpsells.length > 0 && (
+              <div className="mt-8">
+                <h3 className="mb-3 text-xs font-black uppercase text-zinc-400">
+                  Complete your meal
+                </h3>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      {section.items.map((up) => (
-                        <div
-                          key={up.cartId}
-                          className="rounded-xl border bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
+                <div className="grid grid-cols-2 gap-3">
+                  {availableUpsells.map((up) => (
+                    <div
+                      key={up.cartId}
+                      className="rounded-xl border bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
+                    >
+                      <div className="relative mb-3 h-24 w-full overflow-hidden rounded-lg bg-zinc-100 sm:h-28">
+                        <Image
+                          src={up.image}
+                          alt={up.title}
+                          fill
+                          sizes="180px"
+                          className="object-cover"
+                        />
+                      </div>
+
+                      <div className="mb-3 min-h-[34px] text-[12px] font-bold line-clamp-2">
+                        {up.title}
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-black">
+                          ${up.price.toFixed(2)}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => addItem(up)}
+                          className="h-8 w-8 rounded-lg bg-[#DA3327] text-xs font-black text-white"
                         >
-                          <div className="relative mb-3 h-24 w-full overflow-hidden rounded-lg bg-zinc-100 sm:h-28">
-                            <Image
-                              src={up.image}
-                              alt={up.title}
-                              fill
-                              sizes="180px"
-                              className="object-cover"
-                            />
-                          </div>
-
-                          <div className="mb-3 min-h-[34px] text-[12px] font-bold line-clamp-2">
-                            {up.title}
-                          </div>
-
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-black">
-                              ${up.price.toFixed(2)}
-                            </span>
-
-                            <button
-                              type="button"
-                              onClick={() => addItem(up)}
-                              className="h-8 w-8 rounded-lg bg-[#DA3327] text-xs font-black text-white"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                          +
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>
 
           <div className="border-t bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950 sm:p-5">
+            {cart.length > 0 && (
+              <div className="mb-4 flex gap-2">
+                <input
+                  type="text"
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                  placeholder="Promo code"
+                  className="min-w-0 flex-1 rounded-xl border px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                />
+                <button
+                  type="button"
+                  onClick={applyPromoCode}
+                  className="rounded-xl bg-green-800 px-4 py-2 text-xs font-black uppercase text-white"
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+
+            {promoMessage && (
+              <p className={`mb-3 text-xs font-bold ${promoDiscount > 0 ? "text-green-700" : "text-red-600"}`}>
+                {promoMessage}
+              </p>
+            )}
+
             <div className="mb-3 space-y-1.5 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-zinc-500">Subtotal</span>
@@ -544,6 +526,13 @@ export default function CartSidebar() {
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-500">Est. Tax ({storeConfig.taxRate}%)</span>
                   <span className="font-bold">${taxAmount.toFixed(2)}</span>
+                </div>
+              )}
+
+              {promoDiscount > 0 && (
+                <div className="flex items-center justify-between text-green-700">
+                  <span>Promo discount</span>
+                  <span className="font-bold">-${promoDiscount.toFixed(2)}</span>
                 </div>
               )}
 

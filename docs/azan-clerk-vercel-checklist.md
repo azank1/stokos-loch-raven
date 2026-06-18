@@ -7,7 +7,8 @@
 
 ## Vercel project
 
-- [ ] Confirm project connected to `zaygitup/stokos-loch-raven` (or agreed repo)
+- [ ] Confirm Vercel project is on **Bayent Labs** team, connected to `azank1/stokos-loch-raven`
+- [ ] Set `NEXT_PUBLIC_BASE_URL` to your production URL (e.g. `https://stokos-loch-raven-git-main-bayentlabs.vercel.app`)
 - [ ] Production branch = `main`
 - [ ] Latest deploy commit matches GitHub `main`
 - [ ] Smoke: `/track` and `/admin/sign-in` return 200

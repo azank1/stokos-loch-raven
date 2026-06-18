@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import connectMongoDB from "@/lib/mongodb";
 import Order from "@/models/order";
+import { incrementPromoUsage } from "@/lib/promo";
 
 export const runtime = "nodejs";
 
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
     try {
       await connectMongoDB();
 
-      await Order.findOneAndUpdate(
+      const order = await Order.findOneAndUpdate(
         { stripeSessionId: session.id, paymentStatus: { $ne: "paid" } },
         {
           $set: {
@@ -53,8 +54,13 @@ export async function POST(req: Request) {
           $push: {
             statusHistory: { status: "Confirmed", at: new Date() },
           },
-        }
+        },
+        { new: true }
       );
+
+      if (order?.promoCode) {
+        await incrementPromoUsage(order.promoCode);
+      }
     } catch (err) {
       console.error("Order update after webhook failed:", err);
       return NextResponse.json(

@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import { SignIn } from "@clerk/nextjs";
 import { Store } from "lucide-react";
+import AdminSignInAlert from "./adminsigninalert";
 
 export default function AdminSignInPage() {
   return (
@@ -15,6 +17,10 @@ export default function AdminSignInPage() {
             Sign in to access the admin dashboard
           </p>
         </div>
+
+        <Suspense fallback={null}>
+          <AdminSignInAlert />
+        </Suspense>
 
         <SignIn
           routing="hash"

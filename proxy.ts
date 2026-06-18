@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher, clerkClient as getClerkClient } fr
 import { NextResponse } from "next/server";
 
 const isAdminRoute = createRouteMatcher(["/admin(.*)", "/api/admin(.*)"]);
+const isAccountRoute = createRouteMatcher(["/account(.*)", "/api/account(.*)"]);
 
 const isPublicRoute = createRouteMatcher([
   "/",
@@ -11,13 +12,12 @@ const isPublicRoute = createRouteMatcher([
   "/api/checkout(.*)",
   "/api/store(.*)",
   "/api/orders/track(.*)",
+  "/api/promo/validate(.*)",
   "/api/webhooks(.*)",
   "/admin/sign-in(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  if (isPublicRoute(req)) return NextResponse.next();
-
   if (isAdminRoute(req)) {
     const { userId } = await auth();
 
@@ -54,6 +54,18 @@ export default clerkMiddleware(async (auth, req) => {
       }
     }
 
+    return NextResponse.next();
+  }
+
+  if (isPublicRoute(req)) return NextResponse.next();
+
+  if (isAccountRoute(req)) {
+    const { userId } = await auth();
+    if (!userId) {
+      const signInUrl = new URL("/store/towson", req.url);
+      signInUrl.searchParams.set("account", "sign-in");
+      return NextResponse.redirect(signInUrl);
+    }
     return NextResponse.next();
   }
 

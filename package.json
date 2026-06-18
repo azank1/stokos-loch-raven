@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "smoke:test": "node scripts/smoke-test.mjs",
+    "import:menu": "node --env-file=.env.local scripts/import-menu-csv.js",
+    "seed:promos": "node --env-file=.env.local scripts/seed-promo-codes.js",
+    "vercel:env-template": "node scripts/vercel-env-template.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.5",

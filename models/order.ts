@@ -63,6 +63,12 @@ const OrderSchema = new Schema(
     customerEmail: { type: String, default: "Not provided" },
     customerPhone: { type: String },
 
+    clerkUserId: { type: String, index: true },
+
+    promoCode: { type: String },
+    discountAmount: { type: Number, default: 0 },
+    loyaltyPointsEarned: { type: Number, default: 0 },
+
     items: { type: [OrderItemSchema], default: [] },
 
     subtotal: { type: Number, required: true },

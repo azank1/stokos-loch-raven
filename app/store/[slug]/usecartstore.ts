@@ -7,6 +7,7 @@ export interface CartItem {
   cartId: string;
   id: number | string;
   category?: string;
+  categoryId?: string;
   title: string;
   image: string;
   price: number; // unit price
@@ -25,6 +26,7 @@ interface CartStore {
   toggleCart: () => void;
   closeCart: () => void;
   clearCart: () => void;
+  setCart: (items: CartItem[]) => void;
 }
 
 export const useCartStore = create<CartStore>()(
@@ -77,6 +79,12 @@ export const useCartStore = create<CartStore>()(
       clearCart: () =>
         set({
           cart: [],
+        }),
+
+      setCart: (items) =>
+        set({
+          cart: items,
+          isCartOpen: true,
         }),
     }),
     {

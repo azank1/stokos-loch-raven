@@ -457,6 +457,7 @@ export default function ProductModal({ product, isOpen, onClose }: ProductModalP
     const title = readString(activeProduct.title || activeProduct.name, "Product");
     const image = readString(activeProduct.image, FALLBACK_IMAGE);
     const category = readString(activeProduct.category || activeProduct.categorySlug);
+    const categoryId = readString(activeProduct.categoryId);
 
     const modifierKey = selectedModifierDetails
       .map((i) => `${i.groupId}:${i.optionId}:${i.price}:${i.side}`)
@@ -472,6 +473,7 @@ export default function ProductModal({ product, isOpen, onClose }: ProductModalP
       cartId: `${productId}-${getSizeId(activeSize)}-${modifierKey}-${Date.now()}`,
       id: productId,
       category,
+      categoryId: categoryId || undefined,
       title,
       image,
       price: unitPrice,

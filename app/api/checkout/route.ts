@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { auth } from "@clerk/nextjs/server";
 import connectMongoDB from "@/lib/mongodb";
 import Order from "@/models/order";
 import Store from "@/models/store";
+import { validatePromoCode, incrementPromoUsage } from "@/lib/promo";
+import { awardLoyaltyPoints } from "@/lib/loyalty";
 
 function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY!);
@@ -44,6 +47,7 @@ export async function POST(req: Request) {
       orderDay,
       orderTime,
       orderStore,
+      promoCode,
     } = await req.json();
 
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -108,8 +112,30 @@ export async function POST(req: Request) {
     }
 
     const taxAmount = Math.round((subtotal * taxRate) / 100 * 100) / 100;
+
+    let discountAmount = 0;
+    let appliedPromoCode: string | undefined;
+
+    if (promoCode) {
+      const promoResult = await validatePromoCode(String(promoCode), subtotal);
+      if (!promoResult.valid) {
+        return NextResponse.json({ error: promoResult.message }, { status: 400 });
+      }
+      discountAmount = promoResult.discountAmount;
+      appliedPromoCode = promoResult.code;
+    }
+
     const amountTotal =
-      Math.round((subtotal + deliveryFee + taxAmount) * 100) / 100;
+      Math.round((subtotal + deliveryFee + taxAmount - discountAmount) * 100) / 100;
+
+    if (amountTotal <= 0) {
+      return NextResponse.json(
+        { error: "Order total must be greater than zero" },
+        { status: 400 }
+      );
+    }
+
+    const { userId: clerkUserId } = await auth();
 
     // Build Stripe line items
     const lineItems = items.map(
@@ -184,6 +210,17 @@ export async function POST(req: Request) {
       });
     }
 
+    if (discountAmount > 0) {
+      extraLineItems.push({
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Promo (${appliedPromoCode})` },
+          unit_amount: -Math.round(discountAmount * 100),
+        },
+        quantity: 1,
+      });
+    }
+
     const allLineItems = [...lineItems, ...extraLineItems];
 
     // Generate unique order number
@@ -231,6 +268,9 @@ export async function POST(req: Request) {
       deliveryAddress: deliveryAddress || "",
       orderDay: formattedDay,
       orderTime: formattedTime,
+      clerkUserId: clerkUserId || undefined,
+      promoCode: appliedPromoCode,
+      discountAmount,
       items: orderItems,
       subtotal,
       deliveryFee,

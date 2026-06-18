@@ -72,6 +72,12 @@ const UpsellRuleSchema = new Schema(
       trim: true,
     },
 
+    price: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     sortOrder: {
       type: Number,
       default: 0,
@@ -154,6 +160,7 @@ UpsellRuleSchema.pre("validate", function () {
   doc.name = cleanString(doc.name);
   doc.image = cleanString(doc.image);
   doc.description = cleanString(doc.description);
+  doc.price = Math.max(0, Number(doc.price || 0));
   doc.status = cleanStatus(doc.status);
   doc.sortOrder = Number(doc.sortOrder || 0);
 

@@ -1,6 +1,6 @@
 # Vercel Environment Variables Checklist
 
-Set these in **Vercel → Project → Settings → Environment Variables**.
+Set these in **Vercel → Project → Settings → Environment Variables** (Bayent Labs team project, Git repo `azank1/stokos-loch-raven`).
 
 Use a password manager to share secrets with Abassi (Stripe, MongoDB) and never commit real values.
 
@@ -17,7 +17,7 @@ Use a password manager to share secrets with Abassi (Stripe, MongoDB) and never 
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Azan | Clerk production `pk_live_...` |
 | `CLERK_SECRET_KEY` | Azan | Clerk production `sk_live_...` |
 | `ADMIN_EMAILS` | Azan | Comma-separated staff emails |
-| `NEXT_PUBLIC_BASE_URL` | Azan | e.g. `https://stokos-loch-raven.vercel.app` or custom domain |
+| `NEXT_PUBLIC_BASE_URL` | Azan | e.g. `https://stokos-loch-raven-git-main-bayentlabs.vercel.app` or team production alias / custom domain |
 
 ## Preview (optional)
 

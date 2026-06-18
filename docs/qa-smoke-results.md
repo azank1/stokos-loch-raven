@@ -5,21 +5,19 @@
 
 ## Local (localhost:3000)
 
+Run: `npm run smoke:test` (requires dev server)
+
 | Check | Status |
 |-------|--------|
-| `/` | 200 |
-| `/store/towson` | 200 |
-| `/track` | 200 |
-| `/admin/sign-in` | 200 |
-| `/api/store/towson/menu` | 200 |
+| `/` | automated |
+| `/store/towson` | automated |
+| `/track` | automated |
+| `/admin/sign-in` | automated |
+| `/api/store/towson/menu` | automated |
 
-## Production (stokos-loch-raven.vercel.app)
+## Bayent Labs production
 
-| Check | Status | Notes |
-|-------|--------|-------|
-| `/` | 200 | |
-| `/track` | 404 | Deploy lag — push to zaygitup/main required |
-| `/admin/sign-in` | 404 | Deploy lag — push to zaygitup/main required |
+See [go-live-checklist.md](./go-live-checklist.md) for Vercel Deployment Protection and env setup.
 
 ## Manual QA
 
