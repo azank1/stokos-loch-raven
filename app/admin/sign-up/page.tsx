@@ -1,7 +1,7 @@
-import { SignIn } from "@clerk/nextjs";
+import { SignUp } from "@clerk/nextjs";
 import { Store } from "lucide-react";
 
-export default function AdminSignInPage() {
+export default function AdminSignUpPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#0F3F24] px-4">
       <div className="w-full max-w-md">
@@ -12,14 +12,14 @@ export default function AdminSignInPage() {
 
           <h1 className="text-2xl font-black text-white">Stoko&apos;s Admin</h1>
           <p className="mt-2 text-sm text-white/55">
-            Sign in to access the admin dashboard
+            Create your admin account
           </p>
         </div>
 
-        <SignIn
+        <SignUp
           routing="hash"
           forceRedirectUrl="/admin"
-          signUpUrl="/admin/sign-up"
+          signInUrl="/admin/sign-in"
           appearance={{
             elements: {
               rootBox: "w-full",
