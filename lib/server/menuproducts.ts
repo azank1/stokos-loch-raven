@@ -1,7 +1,6 @@
 import "server-only";
 
 import mongoose from "mongoose";
-import { unstable_cache } from "next/cache";
 import connectDB from "@/lib/mongodb";
 import Store from "@/models/store";
 import Product from "@/models/product";
@@ -41,6 +40,7 @@ export type FrontendMenuProductDetails = FrontendMenuProduct;
 const FALLBACK_IMAGE = "/images/placeholder-food.png";
 const MENU_CACHE_TTL_MS = 30_000;
 const DETAIL_CACHE_TTL_MS = 20_000;
+
 const MODIFIER_GROUP_COLLECTIONS = [
   "modifiergroups",
   "modifierGroups",
@@ -52,6 +52,7 @@ const memCache = new Map<string, { data: any; expiresAt: number }>();
 
 function memGet<T>(key: string): T | null {
   const entry = memCache.get(key);
+
   if (!entry) return null;
 
   if (Date.now() > entry.expiresAt) {
@@ -63,7 +64,10 @@ function memGet<T>(key: string): T | null {
 }
 
 function memSet(key: string, data: any, ttlMs = MENU_CACHE_TTL_MS) {
-  memCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  memCache.set(key, {
+    data,
+    expiresAt: Date.now() + ttlMs,
+  });
 }
 
 export function clearStoreMenuProductsCache(storeSlug?: string) {
@@ -73,6 +77,7 @@ export function clearStoreMenuProductsCache(storeSlug?: string) {
   }
 
   const slug = normalizeStoreId(storeSlug);
+
   memCache.delete(`menu-products:${slug}`);
 
   Array.from(memCache.keys()).forEach((key) => {
@@ -87,15 +92,21 @@ function cleanString(value: unknown) {
 }
 
 function cleanNumber(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
 
   const number = Number(cleanString(value).replace(/[^0-9.-]/g, "") || 0);
+
   return Number.isFinite(number) ? number : 0;
 }
 
 function firstFilled(...values: unknown[]) {
   return values.find(
-    (value) => value !== undefined && value !== null && cleanString(value) !== ""
+    (value) =>
+      value !== undefined &&
+      value !== null &&
+      cleanString(value) !== ""
   );
 }
 
@@ -105,8 +116,14 @@ function cleanBoolean(value: unknown, fallback = false) {
 
   if (typeof value === "string") {
     const lower = value.toLowerCase().trim();
-    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) return true;
-    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) return false;
+
+    if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
+      return true;
+    }
+
+    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
+      return false;
+    }
   }
 
   return fallback;
@@ -187,11 +204,16 @@ function addCategoryToMap(map: Map<string, any>, category: any) {
 }
 
 function getConfigProductKey(config: any) {
-  return cleanString(config?.productId || config?.productID || config?.product_id);
+  return cleanString(
+    config?.productId ||
+      config?.productID ||
+      config?.product_id
+  );
 }
 
 function getCategoryKeys(config: any, product: any) {
-  const productCategory = typeof product?.category === "string" ? product.category : "";
+  const productCategory =
+    typeof product?.category === "string" ? product.category : "";
 
   return [
     config?.categoryId,
@@ -214,6 +236,7 @@ function getCategoryKeys(config: any, product: any) {
 
 function pickArray(config: any, product: any, key: string, fallbackKey?: string) {
   const configValue = readArray(config?.[key]);
+
   if (configValue.length > 0) return configValue;
 
   if (fallbackKey) {
@@ -222,6 +245,7 @@ function pickArray(config: any, product: any, key: string, fallbackKey?: string)
   }
 
   const productValue = readArray(product?.[key]);
+
   if (productValue.length > 0) return productValue;
 
   if (fallbackKey) {
@@ -234,16 +258,28 @@ function pickArray(config: any, product: any, key: string, fallbackKey?: string)
 
 async function findActiveStore(storeSlug: string) {
   const cleanSlug = normalizeStoreId(storeSlug);
+
   if (!cleanSlug) return null;
 
-  return Store.findOne({ slug: cleanSlug, status: "Active" })
-    .select({ _id: 1, id: 1, slug: 1, status: 1 })
+  return Store.findOne({
+    slug: cleanSlug,
+    status: "Active",
+  })
+    .select({
+      _id: 1,
+      id: 1,
+      slug: 1,
+      status: 1,
+    })
     .lean<any>()
     .maxTimeMS(5000);
 }
 
 async function findCategoryDocs(keys: string[]) {
-  const cleanKeys = Array.from(new Set(keys.map((key) => cleanString(key)).filter(Boolean)));
+  const cleanKeys = Array.from(
+    new Set(keys.map((key) => cleanString(key)).filter(Boolean))
+  );
+
   if (!cleanKeys.length) return [];
 
   const objectIds = getObjectIds(cleanKeys);
@@ -284,19 +320,33 @@ async function findCategoryDocs(keys: string[]) {
     .maxTimeMS(5000);
 }
 
-function getCategoryDocForProduct(map: Map<string, any>, config: any, product: any) {
+function getCategoryDocForProduct(
+  map: Map<string, any>,
+  config: any,
+  product: any
+) {
   return getCategoryKeys(config, product)
     .map((key) => map.get(key) || map.get(slugify(key)))
     .find(Boolean);
 }
 
-function makeBaseProduct(storeSlug: string, product: any, config: any, categoryDoc?: any) {
+function makeBaseProduct(
+  storeSlug: string,
+  product: any,
+  config: any,
+  categoryDoc?: any
+) {
   const productId = cleanString(product?._id || product?.id || config?.productId);
   const title = cleanString(product?.name || product?.title || "Menu Item");
   const slug = slugify(product?.slug || title || productId);
-  const price = cleanNumber(firstFilled(config?.price, product?.price, product?.numericPrice));
 
-  const rawProductCategory = typeof product?.category === "string" ? product.category : "";
+  const price = cleanNumber(
+    firstFilled(config?.price, product?.price, product?.numericPrice)
+  );
+
+  const rawProductCategory =
+    typeof product?.category === "string" ? product.category : "";
+
   let categoryName = cleanString(
     config?.categoryName ||
       product?.categoryName ||
@@ -356,7 +406,11 @@ function makeBaseProduct(storeSlug: string, product: any, config: any, categoryD
     showInPopular: isPopular,
     sortOrder: Number(config?.sortOrder ?? product?.sortOrder ?? 0),
     status: cleanString(config?.status || product?.status || "Active"),
-    updatedAt: cleanString(config?.updatedAt || product?.lastSavedAt || product?.updatedAt),
+    updatedAt: cleanString(
+      config?.updatedAt ||
+        product?.lastSavedAt ||
+        product?.updatedAt
+    ),
   };
 }
 
@@ -402,7 +456,11 @@ function getModifierGroupKeys(rawGroup: unknown) {
 
 function modifierGroupHasOptions(rawGroup: unknown) {
   if (!isRecord(rawGroup)) return false;
-  return readArray(rawGroup.options).length > 0 || readArray(rawGroup.modifierOptions).length > 0;
+
+  return (
+    readArray(rawGroup.options).length > 0 ||
+    readArray(rawGroup.modifierOptions).length > 0
+  );
 }
 
 function addModifierGroupToMap(map: Map<string, any>, group: any) {
@@ -413,7 +471,9 @@ function addModifierGroupToMap(map: Map<string, any>, group: any) {
 }
 
 async function findModifierGroupDocs(keys: string[]) {
-  const cleanKeys = Array.from(new Set(keys.map((key) => cleanString(key)).filter(Boolean)));
+  const cleanKeys = Array.from(
+    new Set(keys.map((key) => cleanString(key)).filter(Boolean))
+  );
 
   if (!cleanKeys.length || !mongoose.connection.db) return [];
 
@@ -433,7 +493,11 @@ async function findModifierGroupDocs(keys: string[]) {
   }
 
   const statusQuery = {
-    $or: [{ status: "Active" }, { status: { $exists: false } }, { status: "" }],
+    $or: [
+      { status: "Active" },
+      { status: { $exists: false } },
+      { status: "" },
+    ],
   };
 
   const foundDocs: any[] = [];
@@ -442,12 +506,24 @@ async function findModifierGroupDocs(keys: string[]) {
   for (const collectionName of MODIFIER_GROUP_COLLECTIONS) {
     const docs = await mongoose.connection.db
       .collection(collectionName)
-      .find({ $and: [{ $or: orQuery }, statusQuery] })
-      .sort({ sortOrder: 1, name: 1 })
+      .find({
+        $and: [{ $or: orQuery }, statusQuery],
+      })
+      .sort({
+        sortOrder: 1,
+        name: 1,
+      })
       .toArray();
 
     docs.forEach((doc) => {
-      const key = cleanString(doc?._id || doc?.id || doc?.modifierGroupId || doc?.slug || doc?.name);
+      const key = cleanString(
+        doc?._id ||
+          doc?.id ||
+          doc?.modifierGroupId ||
+          doc?.slug ||
+          doc?.name
+      );
+
       if (!key || seen.has(key)) return;
 
       seen.add(key);
@@ -477,16 +553,24 @@ async function buildModifierGroupDocMap(rawGroupsCollection: any[][]) {
   return docMap;
 }
 
-function hydrateModifierGroupsWithMap(rawGroups: any[], docMap: Map<string, any>) {
+function hydrateModifierGroupsWithMap(
+  rawGroups: any[],
+  docMap: Map<string, any>
+) {
   const groups = readArray(rawGroups);
+
   if (!groups.length) return [];
 
   return groups
     .map((rawGroup) => {
       if (modifierGroupHasOptions(rawGroup)) return toPlain(rawGroup);
 
-      const rawGroupRecord = isRecord(rawGroup) ? rawGroup : { modifierGroupId: rawGroup };
+      const rawGroupRecord = isRecord(rawGroup)
+        ? rawGroup
+        : { modifierGroupId: rawGroup };
+
       const rawKeys = getModifierGroupKeys(rawGroup);
+
       const matchedDoc = rawKeys
         .map((key) => docMap.get(key) || docMap.get(slugify(key)))
         .find(Boolean);
@@ -507,7 +591,12 @@ function hydrateModifierGroupsWithMap(rawGroups: any[], docMap: Map<string, any>
         options: rawOptions.length ? rawOptions : docOptions,
         modifierOptions: rawOptions.length ? rawOptions : docOptions,
         name: cleanString(rawGroupRecord.name || matchedDoc.name || matchedDoc.title),
-        title: cleanString(rawGroupRecord.title || rawGroupRecord.name || matchedDoc.title || matchedDoc.name),
+        title: cleanString(
+          rawGroupRecord.title ||
+            rawGroupRecord.name ||
+            matchedDoc.title ||
+            matchedDoc.name
+        ),
       });
     })
     .filter((group) => modifierGroupHasOptions(group));
@@ -515,6 +604,7 @@ function hydrateModifierGroupsWithMap(rawGroups: any[], docMap: Map<string, any>
 
 async function hydrateModifierGroups(rawGroups: any[]) {
   const docMap = await buildModifierGroupDocMap([rawGroups]);
+
   return hydrateModifierGroupsWithMap(rawGroups, docMap);
 }
 
@@ -578,13 +668,17 @@ async function getActiveStoreProductListConfigs(storeKeys: string[]) {
       status: 1,
       updatedAt: 1,
     })
-    .sort({ sortOrder: 1, updatedAt: -1 })
+    .sort({
+      sortOrder: 1,
+      updatedAt: -1,
+    })
     .lean<any[]>()
     .maxTimeMS(5000);
 }
 
 async function findListProductsByConfigIds(productIds: string[]) {
   const objectIds = getObjectIds(productIds);
+
   const productOrQuery: any[] = [
     { id: { $in: productIds } },
     { slug: { $in: productIds } },
@@ -626,16 +720,20 @@ async function findListProductsByConfigIds(productIds: string[]) {
     .maxTimeMS(5000);
 }
 
-// ✅ LIST endpoint/page helper: fast product cards only.
+// LIST endpoint/page helper: fast product cards only.
 // Do NOT fetch sizes/modifierGroups/attachedModifierGroups here.
 // Product details are loaded only when ProductModal opens.
-async function getStoreMenuProductsFromDB(storeSlug: string): Promise<FrontendMenuProduct[]> {
+async function getStoreMenuProductsFromDB(
+  storeSlug: string
+): Promise<FrontendMenuProduct[]> {
   const cleanSlug = normalizeStoreId(storeSlug);
+
   if (!cleanSlug) return [];
 
   await connectDB();
 
   const store = await findActiveStore(cleanSlug);
+
   if (!store) return [];
 
   const storeKeys = buildStoreKeys(store, cleanSlug);
@@ -644,7 +742,11 @@ async function getStoreMenuProductsFromDB(storeSlug: string): Promise<FrontendMe
   if (!configs.length) return [];
 
   const productIds = Array.from(
-    new Set(configs.map((config) => getConfigProductKey(config)).filter(Boolean))
+    new Set(
+      configs
+        .map((config) => getConfigProductKey(config))
+        .filter(Boolean)
+    )
   );
 
   if (!productIds.length) return [];
@@ -655,6 +757,7 @@ async function getStoreMenuProductsFromDB(storeSlug: string): Promise<FrontendMe
   const result = configs
     .map((config) => {
       const product = productMap.get(getConfigProductKey(config));
+
       if (!product) return null;
 
       return buildListProduct(cleanSlug, product, config);
@@ -663,30 +766,31 @@ async function getStoreMenuProductsFromDB(storeSlug: string): Promise<FrontendMe
 
   return result.sort((a, b) => {
     const categorySort = a.categorySlug.localeCompare(b.categorySlug);
+
     if (categorySort !== 0) return categorySort;
 
     return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
   });
 }
 
-
-const getCachedStoreMenuProducts = unstable_cache(
-  getStoreMenuProductsFromDB,
-  ["store-menu-products-v5"],
-  {
-    revalidate: 30,
-    tags: ["store-menu-products", "store-menu"],
-  }
-);
-
-export async function getStoreMenuProducts(storeSlug: string): Promise<FrontendMenuProduct[]> {
+export async function getStoreMenuProducts(
+  storeSlug: string
+): Promise<FrontendMenuProduct[]> {
   const cleanSlug = normalizeStoreId(storeSlug);
+
+  if (!cleanSlug) return [];
+
   const cacheKey = `menu-products:${cleanSlug}`;
   const cached = memGet<FrontendMenuProduct[]>(cacheKey);
+
   if (cached) return cached;
 
-  const data = await getCachedStoreMenuProducts(cleanSlug);
+  // Do not use unstable_cache here.
+  // Next.js data cache fails when payload is over 2MB.
+  const data = await getStoreMenuProductsFromDB(cleanSlug);
+
   memSet(cacheKey, data, MENU_CACHE_TTL_MS);
+
   return data;
 }
 
@@ -701,17 +805,21 @@ export async function getStoreMenuProductDetails(
 
   const cacheKey = `menu-product-detail:${cleanSlug}:${cleanId}`;
   const cached = memGet<FrontendMenuProductDetails>(cacheKey);
+
   if (cached) return cached;
 
   await connectDB();
 
   const store = await findActiveStore(cleanSlug);
+
   if (!store) return null;
 
   const storeKeys = buildStoreKeys(store, cleanSlug);
+
   const productIdKeys = Array.from(
     new Set([cleanId, decodeURIComponent(cleanId)].filter(Boolean))
   );
+
   const productObjectIds = getObjectIds(productIdKeys);
 
   const productOrQuery: any[] = [
@@ -720,7 +828,9 @@ export async function getStoreMenuProductDetails(
   ];
 
   if (productObjectIds.length) {
-    productOrQuery.push({ _id: { $in: productObjectIds } });
+    productOrQuery.push({
+      _id: { $in: productObjectIds },
+    });
   }
 
   const product = await Product.findOne({
@@ -774,7 +884,10 @@ export async function getStoreMenuProductDetails(
     )
   );
 
-  const configProductIds: any[] = [...realProductKeys, ...getObjectIds(realProductKeys)];
+  const configProductIds: any[] = [
+    ...realProductKeys,
+    ...getObjectIds(realProductKeys),
+  ];
 
   const config = await ProductStoreConfig.findOne({
     storeId: { $in: storeKeys },
@@ -823,17 +936,32 @@ export async function getStoreMenuProductDetails(
 
   if (!config) return null;
 
-  const rawModifierGroups = pickArray(config, product, "modifierGroups", "attachedModifierGroups");
+  const rawModifierGroups = pickArray(
+    config,
+    product,
+    "modifierGroups",
+    "attachedModifierGroups"
+  );
+
   const [modifierGroups, categoryDocs] = await Promise.all([
     hydrateModifierGroups(rawModifierGroups),
     findCategoryDocs(getCategoryKeys(config, product)),
   ]);
 
   const categoryMap = new Map<string, any>();
+
   categoryDocs.forEach((doc) => addCategoryToMap(categoryMap, doc));
+
   const categoryDoc = getCategoryDocForProduct(categoryMap, config, product);
 
-  const fullProduct = buildFullProduct(cleanSlug, product, config, modifierGroups, categoryDoc);
+  const fullProduct = buildFullProduct(
+    cleanSlug,
+    product,
+    config,
+    modifierGroups,
+    categoryDoc
+  );
+
   memSet(cacheKey, fullProduct, DETAIL_CACHE_TTL_MS);
 
   return fullProduct;
