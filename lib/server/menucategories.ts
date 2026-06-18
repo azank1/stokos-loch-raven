@@ -3,6 +3,7 @@ import "server-only";
 import mongoose from "mongoose";
 import { unstable_cache } from "next/cache";
 import connectDB from "@/lib/mongodb";
+import Store from "@/models/store";
 import Category from "@/models/category";
 import CategoryStoreConfig from "@/models/categorystoreconfig";
 
@@ -35,17 +36,8 @@ function slugify(value: unknown) {
     .replace(/^-+|-+$/g, "");
 }
 
-function normalizeStoreSlug(value: unknown) {
-  return slugify(value);
-}
-
-function isValidObjectId(value: string) {
-  return mongoose.Types.ObjectId.isValid(value);
-}
-
-function isActiveStatus(value: unknown) {
-  const status = cleanString(value).toLowerCase();
-  return !status || status === "active";
+function normalizeStoreId(value: unknown) {
+  return cleanString(value).toLowerCase();
 }
 
 function uniqueBySlug(categories: FrontendMenuCategory[]) {
@@ -63,138 +55,193 @@ function uniqueBySlug(categories: FrontendMenuCategory[]) {
   });
 }
 
-function normalizeCategoryFromConfig(config: any, category: any): FrontendMenuCategory | null {
-  if (!config) return null;
-
-  const categoryName = cleanString(
-    category?.name || category?.title || config?.categoryName
+function buildStoreKeys(store: any, storeSlug: string) {
+  return Array.from(
+    new Set(
+      [
+        store?._id ? String(store._id) : "",
+        store?.id ? String(store.id) : "",
+        store?.slug ? String(store.slug) : "",
+        storeSlug,
+      ]
+        .map((value) => normalizeStoreId(value))
+        .filter(Boolean)
+    )
   );
-  const categorySlug = slugify(
-    category?.slug || category?.id || category?._id || config?.categorySlug || categoryName
-  );
-
-  if (!categoryName || !categorySlug) return null;
-
-  return {
-    id: categorySlug,
-    name: categoryName,
-    slug: categorySlug,
-    description: cleanString(category?.description),
-    image: cleanString(category?.image || category?.imageUrl || category?.thumbnail),
-    sortOrder: cleanNumber(config?.sortOrder ?? category?.sortOrder),
-  };
 }
 
-export async function getStoreMenuCategoriesFromDB(
+function getObjectIds(keys: string[]) {
+  return keys
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+}
+
+function addCategoryToMap(map: Map<string, any>, category: any) {
+  const keys = [
+    category?._id ? String(category._id) : "",
+    category?.id,
+    category?.slug,
+    category?.name,
+  ]
+    .map((value) => cleanString(value))
+    .filter(Boolean);
+
+  keys.forEach((key) => {
+    map.set(key, category);
+    map.set(slugify(key), category);
+  });
+}
+
+async function getStoreMenuCategoriesFromDB(
   storeSlug: string
 ): Promise<FrontendMenuCategory[]> {
-  const cleanStoreSlug = normalizeStoreSlug(storeSlug);
+  const cleanStoreSlug = normalizeStoreId(storeSlug);
 
   if (!cleanStoreSlug) return [];
 
   await connectDB();
 
-  // Store-wise categories must come from CategoryStoreConfig only.
-  // StoreMenu snapshots/rebuilds are intentionally ignored here.
+  const store = await Store.findOne({
+    slug: cleanStoreSlug,
+    status: "Active",
+  })
+    .select({ _id: 1, id: 1, slug: 1, status: 1 })
+    .lean<any>()
+    .maxTimeMS(5000);
+
+  if (!store) return [];
+
+  const storeKeys = buildStoreKeys(store, cleanStoreSlug);
+
   const configs = await CategoryStoreConfig.find({
-    storeId: cleanStoreSlug,
+    storeId: { $in: storeKeys },
     $and: [
       {
         $or: [
           { status: "Active" },
           { status: { $exists: false } },
           { status: "" },
-          { status: null },
         ],
       },
       {
         $or: [
           { available: true },
-          { available: { $exists: false } },
-          { available: null },
-        ],
-      },
-      {
-        $or: [
           { isAvailable: true },
-          { isAvailable: { $exists: false } },
-          { isAvailable: null },
+          {
+            available: { $exists: false },
+            isAvailable: { $exists: false },
+          },
         ],
       },
     ],
   })
     .select({
-      _id: 1,
       categoryId: 1,
       categoryName: 1,
       categorySlug: 1,
       storeId: 1,
+      status: 1,
       available: 1,
       isAvailable: 1,
-      status: 1,
       sortOrder: 1,
       updatedAt: 1,
     })
-    .sort({ sortOrder: 1, categoryName: 1, updatedAt: -1 })
-    .lean<any[]>();
+    .sort({ sortOrder: 1, updatedAt: -1 })
+    .lean<any[]>()
+    .maxTimeMS(5000);
 
   if (!configs.length) return [];
 
-  const categoryIds = Array.from(
-    new Set(configs.map((config) => cleanString(config.categoryId)).filter(Boolean))
+  const categoryKeys = Array.from(
+    new Set(
+      configs
+        .flatMap((config) => [config.categoryId, config.categorySlug, config.categoryName])
+        .map((value) => cleanString(value))
+        .filter(Boolean)
+    )
   );
 
-  const objectIds = categoryIds
-    .filter(isValidObjectId)
-    .map((categoryId) => new mongoose.Types.ObjectId(categoryId));
+  const objectIds = getObjectIds(categoryKeys);
+  const slugKeys = categoryKeys.map((key) => slugify(key));
 
-  const categories = objectIds.length
-    ? await Category.find({
-        _id: { $in: objectIds },
+  const categoryOrQuery: any[] = [
+    { id: { $in: categoryKeys } },
+    { slug: { $in: [...categoryKeys, ...slugKeys] } },
+    { name: { $in: categoryKeys } },
+  ];
+
+  if (objectIds.length) {
+    categoryOrQuery.push({ _id: { $in: objectIds } });
+  }
+
+  const categories = await Category.find({
+    $and: [
+      {
         $or: [
           { status: "Active" },
           { status: { $exists: false } },
           { status: "" },
-          { status: null },
         ],
-      })
-        .select({
-          _id: 1,
-          id: 1,
-          name: 1,
-          title: 1,
-          slug: 1,
-          description: 1,
-          image: 1,
-          imageUrl: 1,
-          thumbnail: 1,
-          sortOrder: 1,
-          status: 1,
-          updatedAt: 1,
-        })
-        .lean<any[]>()
-    : [];
+      },
+      { $or: categoryOrQuery },
+    ],
+  })
+    .select({
+      _id: 1,
+      id: 1,
+      name: 1,
+      slug: 1,
+      description: 1,
+      image: 1,
+      sortOrder: 1,
+      status: 1,
+      updatedAt: 1,
+    })
+    .sort({ sortOrder: 1, updatedAt: -1 })
+    .lean<any[]>()
+    .maxTimeMS(5000);
 
-  const categoriesById = new Map<string, any>();
-  categories.forEach((category: any) => {
-    categoriesById.set(cleanString(category._id), category);
-  });
+  const categoryMap = new Map<string, any>();
+  categories.forEach((category) => addCategoryToMap(categoryMap, category));
 
-  return uniqueBySlug(
-    configs
-      .filter((config) => isActiveStatus(config?.status))
-      .map((config) => normalizeCategoryFromConfig(config, categoriesById.get(cleanString(config.categoryId))))
-      .filter(Boolean) as FrontendMenuCategory[]
-  ).sort((a, b) => {
-    const sortDiff = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
-    if (sortDiff !== 0) return sortDiff;
-    return a.name.localeCompare(b.name);
-  });
+  const result = configs
+    .map((config) => {
+      const categoryId = cleanString(config.categoryId);
+      const categorySlug = cleanString(config.categorySlug);
+      const categoryName = cleanString(config.categoryName);
+
+      const category =
+        categoryMap.get(categoryId) ||
+        categoryMap.get(slugify(categoryId)) ||
+        categoryMap.get(categorySlug) ||
+        categoryMap.get(slugify(categorySlug)) ||
+        categoryMap.get(categoryName) ||
+        categoryMap.get(slugify(categoryName));
+
+      const name = cleanString(category?.name || categoryName || categorySlug || categoryId);
+      const slug = slugify(category?.slug || categorySlug || name || categoryId);
+
+      if (!name || !slug) return null;
+
+      return {
+        id: slug,
+        name,
+        slug,
+        description: cleanString(category?.description),
+        image: cleanString(category?.image),
+        sortOrder: cleanNumber(config.sortOrder ?? category?.sortOrder ?? 0),
+      };
+    })
+    .filter(Boolean) as FrontendMenuCategory[];
+
+  return uniqueBySlug(result).sort(
+    (a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)
+  );
 }
 
 const getCachedStoreMenuCategories = unstable_cache(
   getStoreMenuCategoriesFromDB,
-  ["store-menu-categories-from-category-store-config-v1"],
+  ["store-menu-categories-v8"],
   {
     revalidate: 30,
     tags: ["store-menu-categories", "store-menu"],
@@ -202,5 +249,5 @@ const getCachedStoreMenuCategories = unstable_cache(
 );
 
 export async function getStoreMenuCategories(storeSlug: string) {
-  return getCachedStoreMenuCategories(normalizeStoreSlug(storeSlug));
+  return getCachedStoreMenuCategories(normalizeStoreId(storeSlug));
 }

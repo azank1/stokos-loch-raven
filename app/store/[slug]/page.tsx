@@ -10,11 +10,8 @@ import DealsSection from "@/components/dealssection";
 import CartSidebar from "@/components/cartsidebar";
 import ScrollMenu from "@/components/scrollmenu";
 import MenuSectionsClient from "@/components/menusectionclient";
-import { getStoreMenuSnapshot } from "@/lib/server/storemenu-snapshot";
+import { getStoreMenuPayload, type StoreMenuApiData } from "@/lib/server/storemenu";
 
-// Public store pages must be served from the StoreMenu snapshot only.
-// Admin rebuild updates the snapshot and revalidates this path.
-export const dynamic = "force-static";
 export const revalidate = 30;
 export const dynamicParams = true;
 
@@ -26,21 +23,69 @@ type StorePageProps = {
   params: Promise<{ slug: string }>;
 };
 
+type MenuCategoryTab = {
+  id: string;
+  name: string;
+  slug: string;
+  title?: string;
+  description?: string;
+  image?: string;
+  sortOrder?: number;
+};
+
+const EMPTY_MENU_DATA: StoreMenuApiData = {
+  success: false,
+  store: null,
+  categories: [],
+  menuCategories: [],
+  products: [],
+  menuProducts: [],
+  modifierGroups: [],
+  upsells: [],
+  upsellProducts: [],
+  counts: {
+    categories: 0,
+    products: 0,
+    modifierGroups: 0,
+    upsells: 0,
+  },
+  updatedAt: "",
+};
+
+function pickNonEmptyArray<T>(first?: T[], second?: T[]) {
+  if (Array.isArray(first) && first.length > 0) return first;
+  if (Array.isArray(second) && second.length > 0) return second;
+  return [];
+}
+
+async function getInitialStoreMenu(slug: string): Promise<StoreMenuApiData> {
+  try {
+    // ✅ Important: server component mein apni hi REST API call mat karo.
+    // Direct server helper = no internal HTTP round-trip, no duplicate cold start.
+    return await getStoreMenuPayload(slug);
+  } catch (error) {
+    console.error("Initial store menu load error:", error);
+    return EMPTY_MENU_DATA;
+  }
+}
+
 export default async function StorePage({ params }: StorePageProps) {
   const { slug } = await params;
 
   const store = STORES.find((item) => item.slug === slug);
   if (!store) notFound();
 
-  const snapshot = await getStoreMenuSnapshot(slug);
+  const initialMenuData = await getInitialStoreMenu(slug);
 
-  const initialCategories = Array.isArray(snapshot.categories)
-    ? snapshot.categories
-    : [];
+  const initialCategories = pickNonEmptyArray<MenuCategoryTab>(
+    initialMenuData.categories,
+    initialMenuData.menuCategories
+  );
 
-  const initialProducts = Array.isArray(snapshot.products)
-    ? snapshot.products
-    : [];
+  const initialProducts = pickNonEmptyArray(
+    initialMenuData.products,
+    initialMenuData.menuProducts
+  );
 
   return (
     <main className="min-h-screen bg-white dark:bg-black">
@@ -62,6 +107,7 @@ export default async function StorePage({ params }: StorePageProps) {
         storeSlug={slug}
         categories={initialCategories}
         initialProducts={initialProducts}
+        initialMenuData={initialMenuData}
       />
 
       <BackToTop />

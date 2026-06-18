@@ -27,6 +27,7 @@ export default async function connectDB() {
     throw new Error("MONGODB_URI is missing in environment variables.");
   }
 
+  // Already connected
   if (cached.conn && mongoose.connection.readyState === 1) {
     return cached.conn;
   }
@@ -36,24 +37,30 @@ export default async function connectDB() {
     return cached.conn;
   }
 
+  // Reuse the same connecting promise
   if (!cached.promise) {
     mongoose.set("strictQuery", true);
 
     cached.promise = mongoose.connect(MONGODB_URI, {
       dbName: MONGODB_DB,
       bufferCommands: false,
+
+      // Do not build indexes automatically in production
       autoIndex: process.env.NODE_ENV !== "production",
+
+      // Prefer IPv4 for Atlas/local DNS stability
       family: 4,
 
-      // Keep one reusable pool instead of creating a new slow Atlas connection per request.
-      maxPoolSize: 20,
+      // Good reusable pool for local dev + Vercel/serverless
+      maxPoolSize: 10,
       minPoolSize: 0,
       maxIdleTimeMS: 60_000,
 
-      // 30s is the MongoDB driver default style timeout. Do not use tiny 2.5s / 15s menu read timeouts.
+      // Connection/read timeouts
       serverSelectionTimeoutMS: 30_000,
       connectTimeoutMS: 30_000,
       socketTimeoutMS: 60_000,
+
       heartbeatFrequencyMS: 10_000,
       retryWrites: true,
     });

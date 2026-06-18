@@ -1,4 +1,5 @@
 /*
+<<<<<<< HEAD
   Run once from project root after replacing the files:
 
   node --env-file=.env.local scripts/mongodb-indexes.js
@@ -179,14 +180,25 @@ async function printPopularMenuItemsCheck(db) {
     console.log(`- ${row.storeId} => categoryId=${row.categoryId}`);
   });
 }
+=======
+  Run once from project root:
+  node --env-file=.env.local scripts/mongodb-indexes.js
+*/
+
+const { MongoClient } = require("mongodb");
+>>>>>>> 4fe7232 (loadingmenu issue --- resolve)
 
 async function main() {
   const uri = process.env.MONGODB_URI;
 
   if (!uri) {
+<<<<<<< HEAD
     throw new Error(
       "MONGODB_URI is missing. Run with: node --env-file=.env.local scripts/mongodb-indexes.js"
     );
+=======
+    throw new Error("MONGODB_URI is missing. Run with: node --env-file=.env.local scripts/mongodb-indexes.js");
+>>>>>>> 4fe7232 (loadingmenu issue --- resolve)
   }
 
   const client = new MongoClient(uri, {
@@ -196,6 +208,7 @@ async function main() {
 
   await client.connect();
   const db = client.db("stokos");
+<<<<<<< HEAD
   const categoryStoreConfigs = db.collection("categorystoreconfigs");
 
   await dropWrongUniqueIndexes(categoryStoreConfigs);
@@ -204,10 +217,35 @@ async function main() {
   await printPopularMenuItemsCheck(db);
 
   console.log("\n✅ MongoDB indexes fixed/verified successfully.");
+=======
+
+  await Promise.all([
+    db.collection("stores").createIndex({ slug: 1, status: 1 }),
+
+    db.collection("productstoreconfigs").createIndex({ storeId: 1, status: 1, isAvailable: 1, available: 1, sortOrder: 1, updatedAt: -1 }),
+    db.collection("productstoreconfigs").createIndex({ storeId: 1, productId: 1, status: 1 }),
+    db.collection("productstoreconfigs").createIndex({ productId: 1 }),
+
+    db.collection("products").createIndex({ status: 1, _id: 1 }),
+    db.collection("products").createIndex({ status: 1, id: 1 }),
+    db.collection("products").createIndex({ status: 1, slug: 1 }),
+
+    db.collection("categorystoreconfigs").createIndex({ storeId: 1, status: 1, isAvailable: 1, available: 1, sortOrder: 1, updatedAt: -1 }),
+    db.collection("categories").createIndex({ status: 1, _id: 1 }),
+    db.collection("categories").createIndex({ status: 1, id: 1 }),
+    db.collection("categories").createIndex({ status: 1, slug: 1 }),
+  ]);
+
+  console.log("✅ MongoDB indexes created/verified successfully.");
+>>>>>>> 4fe7232 (loadingmenu issue --- resolve)
   await client.close();
 }
 
 main().catch((error) => {
+<<<<<<< HEAD
   console.error("❌ Failed to fix MongoDB indexes:", error);
+=======
+  console.error("❌ Failed to create MongoDB indexes:", error);
+>>>>>>> 4fe7232 (loadingmenu issue --- resolve)
   process.exit(1);
 });

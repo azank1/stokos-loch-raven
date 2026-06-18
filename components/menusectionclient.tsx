@@ -1,66 +1,50 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import MenuSection from "@/components/menusection";
-import { useSearchStore } from "@/lib/data/useSearchStore";
 
-export type MenuCategoryTab = {
-  id: string;
-  name: string;
+type MenuCategoryTab = {
+  id?: string;
   slug?: string;
+  name?: string;
+  title?: string;
   description?: string;
   image?: string;
   sortOrder?: number;
 };
 
-type MenuSectionsClientProps = {
+type StoreMenuApiData = {
+  success?: boolean;
+  store?: any;
+  categories?: MenuCategoryTab[];
+  menuCategories?: MenuCategoryTab[];
+  products?: any[];
+  menuProducts?: any[];
+  modifierGroups?: any[];
+  upsells?: any[];
+  upsellProducts?: any[];
+  updatedAt?: string;
+};
+
+interface MenuSectionsClientProps {
   storeSlug: string;
-  categories?: MenuCategoryTab[] | null;
-  initialProducts?: any[] | null;
-};
+  categories?: MenuCategoryTab[];
+  initialProducts?: any[];
+  initialMenuData?: StoreMenuApiData;
+}
 
-const POPULAR_CATEGORY: MenuCategoryTab = {
-  id: "trending",
-  slug: "trending",
-  name: "Popular Menu Items",
-  description: "",
-  image: "",
-  sortOrder: -1,
-};
-
-const DEFAULT_CATEGORY: MenuCategoryTab = {
-  id: "menu-items",
-  slug: "menu-items",
-  name: "Menu Items",
-  description: "",
-  image: "",
-  sortOrder: 9999,
-};
-
-const MENU_COUPON_CATEGORY_KEYS = new Set([
-  "menu-coupons",
-  "menu-coupon",
-  "menu-coupon-category",
-  "coupons",
-  "coupon",
-  "deals",
-  "deal",
-  "menu-deals",
-  "menu-deal",
-]);
+function pickNonEmptyArray<T>(first?: T[], second?: T[], third?: T[]) {
+  if (Array.isArray(first) && first.length > 0) return first;
+  if (Array.isArray(second) && second.length > 0) return second;
+  if (Array.isArray(third) && third.length > 0) return third;
+  return [];
+}
 
 function cleanString(value: unknown) {
   return String(value || "").trim();
 }
 
-function cleanNumber(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-
-  const number = Number(cleanString(value).replace(/[^0-9.-]/g, "") || 0);
-  return Number.isFinite(number) ? number : 0;
-}
-
-function cleanBoolean(value: unknown, fallback = false) {
+function cleanBoolean(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value === 1;
 
@@ -70,13 +54,9 @@ function cleanBoolean(value: unknown, fallback = false) {
     if (["true", "yes", "1", "active", "popular", "featured"].includes(lower)) {
       return true;
     }
-
-    if (["false", "no", "0", "inactive", "off", "hidden"].includes(lower)) {
-      return false;
-    }
   }
 
-  return fallback;
+  return false;
 }
 
 function slugify(value: unknown) {
@@ -88,43 +68,22 @@ function slugify(value: unknown) {
     .replace(/^-+|-+$/g, "");
 }
 
-function isPopularCategory(category: Partial<MenuCategoryTab>) {
-  const id = slugify(category.id);
-  const slug = slugify(category.slug);
-  const name = slugify(category.name);
+function getCategoryKey(category: MenuCategoryTab) {
+  return slugify(category.slug || category.id || category.name || category.title);
+}
+
+function getCategoryTitle(category: MenuCategoryTab) {
+  return cleanString(category.name || category.title || category.slug || category.id || "Menu");
+}
+
+function isPopularCategory(category: MenuCategoryTab) {
+  const key = slugify(category.slug || category.id || category.name || category.title);
 
   return (
-    id === "trending" ||
-    slug === "trending" ||
-    name === "trending" ||
-    name === "popular-menu-items" ||
-    name === "popular-items" ||
-    name === "popular-menu-item"
-  );
-}
-
-function getProductCategoryName(product: any) {
-  if (typeof product?.category === "string") return cleanString(product.category);
-
-  return cleanString(
-    product?.categoryName ||
-      product?.categoryTitle ||
-      product?.category?.name ||
-      product?.category?.title ||
-      ""
-  );
-}
-
-function getProductCategorySlug(product: any) {
-  if (typeof product?.category === "string") return slugify(product.category);
-
-  return slugify(
-    product?.categorySlug ||
-      product?.category?.slug ||
-      product?.category?.id ||
-      product?.category?._id ||
-      getProductCategoryName(product) ||
-      product?.categoryId
+    key === "trending" ||
+    key === "popular-menu-items" ||
+    key === "popular-items" ||
+    key === "popular-menu-item"
   );
 }
 
@@ -137,322 +96,212 @@ function isProductPopular(product: any) {
   );
 }
 
-function isProductActive(product: any) {
-  const status = cleanString(product?.status || "Active").toLowerCase();
-
-  return (
-    !status ||
-    status === "active" ||
-    status === "published" ||
-    status === "available" ||
-    status === "ready"
-  );
-}
-
-function normalizeProduct(product: any, storeSlug: string) {
-  const title = cleanString(product?.title || product?.name || "Menu Item");
-
-  const productId = cleanString(
-    product?.id ||
-      product?.productId ||
-      product?._id ||
-      product?.slug ||
-      slugify(title)
-  );
-
-  const rawCategoryName = getProductCategoryName(product);
-  const rawCategorySlug = getProductCategorySlug(product);
-
-  const categoryName = rawCategoryName || DEFAULT_CATEGORY.name;
-  const categorySlug = rawCategorySlug || DEFAULT_CATEGORY.slug || DEFAULT_CATEGORY.id;
-
-  const price = cleanNumber(product?.price ?? product?.numericPrice);
-  const popular = isProductPopular(product);
-
-  return {
-    ...product,
-    id: productId,
-    productId: cleanString(product?.productId || productId),
-    slug: cleanString(product?.slug || slugify(title)),
-    title,
-    name: title,
-    description: cleanString(product?.description),
-    image: cleanString(product?.image || "/images/placeholder-food.png"),
-    price,
-    numericPrice: cleanNumber(product?.numericPrice ?? price),
-    categoryId: cleanString(product?.categoryId || categorySlug),
-    categoryName,
-    categorySlug,
-    category: categorySlug || categoryName,
-    storeSlug: cleanString(product?.storeSlug || storeSlug),
-    sortOrder: cleanNumber(product?.sortOrder),
-    isPopular: popular,
-    showInPopular: popular,
-    status: cleanString(product?.status || "Active"),
-  };
-}
-
-function normalizeProducts(products: any[], storeSlug: string) {
-  return (Array.isArray(products) ? products : [])
-    .map((product) => normalizeProduct(product, storeSlug))
-    .filter((product) => {
-      if (!product.id || !product.title) return false;
-      if (!isProductActive(product)) return false;
-
-      const categoryKey = slugify(
-        product.categorySlug || product.categoryName || product.category
-      );
-
-      if (MENU_COUPON_CATEGORY_KEYS.has(categoryKey)) return false;
-
-      return true;
-    })
-    .sort((a, b) => {
-      const categorySort = cleanString(a.categorySlug).localeCompare(
-        cleanString(b.categorySlug)
-      );
-
-      if (categorySort !== 0) return categorySort;
-
-      return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
-    });
-}
-
-function normalizeCategory(category: Partial<MenuCategoryTab>): MenuCategoryTab {
-  const name = cleanString(category.name);
-  const cleanSlug = slugify(category.slug || category.id || name);
-
-  return {
-    id: cleanSlug,
-    slug: cleanSlug,
-    name,
-    description: cleanString(category.description),
-    image: cleanString(category.image),
-    sortOrder: cleanNumber(category.sortOrder),
-  };
-}
-
-function normalizeInputCategories(categories: Partial<MenuCategoryTab>[]) {
-  const seen = new Set<string>();
-
-  return (Array.isArray(categories) ? categories : [])
-    .map((category) => normalizeCategory(category))
-    .filter((category) => {
-      if (!category.id || !category.name) return false;
-      if (isPopularCategory(category)) return false;
-
-      const key = slugify(category.slug || category.id || category.name);
-      if (!key || seen.has(key)) return false;
-
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
-}
-
-function deriveCategoriesFromProducts(products: any[]): MenuCategoryTab[] {
-  const seen = new Set<string>();
-
-  return (Array.isArray(products) ? products : [])
-    .map((product) => {
-      const categoryName =
-        getProductCategoryName(product) ||
-        product?.categoryName ||
-        DEFAULT_CATEGORY.name;
-
-      const categorySlug =
-        getProductCategorySlug(product) ||
-        product?.categorySlug ||
-        DEFAULT_CATEGORY.slug ||
-        DEFAULT_CATEGORY.id;
-
-      return {
-        id: categorySlug,
-        slug: categorySlug,
-        name: categoryName || categorySlug.replace(/-/g, " "),
-        description: "",
-        image: "",
-        sortOrder: cleanNumber(product?.categorySortOrder || 9999),
-      };
-    })
-    .filter((category) => {
-      if (!category.id || !category.name) return false;
-      if (isPopularCategory(category)) return false;
-      if (MENU_COUPON_CATEGORY_KEYS.has(slugify(category.slug || category.id))) return false;
-      if (seen.has(category.id)) return false;
-
-      seen.add(category.id);
-      return true;
-    });
-}
-
-function buildMenuCategories(
-  inputCategories: Partial<MenuCategoryTab>[],
-  products: any[]
-) {
-  // Main fix: when snapshot/categories collection has categories, use those
-  // categories as the source of truth. Do NOT derive/filter the menu tabs from
-  // products. Empty categories will therefore still render.
-  const realCategories = normalizeInputCategories(inputCategories);
-
-  const safeRealCategories = realCategories.length
-    ? realCategories
-    : products.length
-      ? deriveCategoriesFromProducts(products)
-      : [];
-
-  const hasPopularProducts = products.some((product) => isProductPopular(product));
-
-  return hasPopularProducts ? [POPULAR_CATEGORY, ...safeRealCategories] : safeRealCategories;
-}
-
-function getCategorySectionId(category: MenuCategoryTab) {
-  return slugify(category.slug || category.id || category.name);
-}
-
 function getProductCategoryKeys(product: any) {
-  const categoryString = typeof product?.category === "string" ? product.category : "";
+  const keys = new Set<string>();
 
-  return [
-    product?.categoryId,
-    product?.categorySlug,
-    product?.categoryName,
-    product?.categoryTitle,
-    categoryString,
-    product?.category?.id,
-    product?.category?._id,
-    product?.category?.slug,
-    product?.category?.name,
-    product?.category?.title,
-  ]
-    .filter(Boolean)
-    .map((value) => slugify(value));
+  const add = (value: unknown) => {
+    const key = slugify(value);
+    if (key) keys.add(key);
+  };
+
+  add(product?.category);
+  add(product?.categoryId);
+  add(product?.categorySlug);
+  add(product?.categoryName);
+  add(product?.categoryTitle);
+
+  if (product?.category && typeof product.category === "object") {
+    add(product.category._id);
+    add(product.category.id);
+    add(product.category.slug);
+    add(product.category.name);
+    add(product.category.title);
+  }
+
+  if (Array.isArray(product?.categories)) {
+    product.categories.forEach((category: any) => {
+      if (typeof category === "string") {
+        add(category);
+      } else {
+        add(category?._id);
+        add(category?.id);
+        add(category?.slug);
+        add(category?.name);
+        add(category?.title);
+      }
+    });
+  }
+
+  if (Array.isArray(product?.categoryIds)) {
+    product.categoryIds.forEach(add);
+  }
+
+  return keys;
 }
 
 function productBelongsToCategory(product: any, category: MenuCategoryTab) {
-  const sectionId = getCategorySectionId(category);
-
-  if (sectionId === DEFAULT_CATEGORY.id) {
-    const productKeys = getProductCategoryKeys(product);
-    return !productKeys.length || productKeys.includes(DEFAULT_CATEGORY.id);
-  }
-
-  const categoryKeys = [category.id, category.slug, category.name, sectionId]
-    .filter(Boolean)
-    .map((value) => slugify(value));
+  const categoryKeys = [
+    category.id,
+    category.slug,
+    category.name,
+    category.title,
+  ]
+    .map((value) => slugify(value))
+    .filter(Boolean);
 
   const productKeys = getProductCategoryKeys(product);
 
-  return categoryKeys.some((key) => productKeys.includes(key));
-}
-
-function productMatchesSearch(product: any, query: string) {
-  if (!query) return true;
-
-  return cleanString(product.title || product.name)
-    .toLowerCase()
-    .includes(query);
-}
-
-function EmptyCategorySection({ category }: { category: MenuCategoryTab }) {
-  return (
-    <section
-      id={getCategorySectionId(category)}
-      className="mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-5 md:px-6 xl:px-10"
-    >
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-black text-zinc-950 dark:text-white">
-            {category.name}
-          </h2>
-
-          {category.description ? (
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              {category.description}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-dashed border-zinc-200 bg-white p-6 text-sm font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-[#121212] dark:text-zinc-400">
-        No products added in this category yet.
-      </div>
-    </section>
-  );
+  return categoryKeys.some((key) => productKeys.has(key));
 }
 
 export default function MenuSectionsClient({
   storeSlug,
   categories = [],
   initialProducts = [],
+  initialMenuData,
 }: MenuSectionsClientProps) {
-  const { searchQuery } = useSearchStore();
+  const [clientMenuData, setClientMenuData] = useState<StoreMenuApiData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const products = useMemo(
-    () => normalizeProducts(initialProducts || [], storeSlug),
-    [initialProducts, storeSlug]
-  );
-
-  const menuCategories = useMemo(
-    () => buildMenuCategories(categories || [], products),
-    [categories, products]
-  );
+  const products = useMemo(() => {
+    return pickNonEmptyArray(
+      clientMenuData?.products,
+      clientMenuData?.menuProducts,
+      pickNonEmptyArray(
+        initialMenuData?.products,
+        initialMenuData?.menuProducts,
+        initialProducts
+      )
+    );
+  }, [clientMenuData, initialMenuData, initialProducts]);
 
   const visibleCategories = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    return pickNonEmptyArray(
+      clientMenuData?.categories,
+      clientMenuData?.menuCategories,
+      pickNonEmptyArray(
+        initialMenuData?.categories,
+        initialMenuData?.menuCategories,
+        categories
+      )
+    );
+  }, [clientMenuData, initialMenuData, categories]);
 
-    if (!query) return menuCategories;
+  useEffect(() => {
+    if (!storeSlug) return;
 
-    return menuCategories.filter((category) => {
-      if (isPopularCategory(category)) {
-        return products.some(
-          (product) => isProductPopular(product) && productMatchesSearch(product, query)
+    // ✅ Fallback only. Normal path already gets data from server helper.
+    // Do not use no-store here; let route/CDN Cache-Control work.
+    if (products.length > 0 && visibleCategories.length > 0) return;
+
+    const controller = new AbortController();
+
+    async function loadMenu() {
+      setIsLoading(true);
+
+      try {
+        const response = await fetch(
+          `/api/store/${encodeURIComponent(storeSlug)}/menu`,
+          {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+            },
+            signal: controller.signal,
+          }
         );
+
+        if (!response.ok) {
+          throw new Error(`Menu API failed with status ${response.status}`);
+        }
+
+        const data = (await response.json()) as StoreMenuApiData;
+        setClientMenuData(data);
+      } catch (error: any) {
+        if (error?.name !== "AbortError") {
+          console.error("Client menu API load error:", error);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
       }
+    }
 
-      return products.some(
-        (product) =>
-          productBelongsToCategory(product, category) &&
-          productMatchesSearch(product, query)
-      );
-    });
-  }, [menuCategories, products, searchQuery]);
+    loadMenu();
 
-  if (!menuCategories.length && !products.length) {
+    return () => controller.abort();
+  }, [storeSlug, products.length, visibleCategories.length]);
+
+  if (!storeSlug) return null;
+
+  if (products.length === 0 && isLoading) {
     return (
-      <section className="mx-auto w-full max-w-[1600px] px-4 py-10 sm:px-5 md:px-6 xl:px-10">
-        <div className="rounded-3xl border border-zinc-200 bg-white p-8 text-center shadow-sm dark:border-zinc-800 dark:bg-[#121212]">
-          <p className="text-sm font-black uppercase tracking-widest text-zinc-500">
-            No products found for this store.
-          </p>
-        </div>
+      <section className="mx-auto max-w-[1600px] px-4 py-10 text-black dark:text-white">
+        <h2 className="text-2xl font-black">Loading menu...</h2>
+        <p className="mt-2 text-sm font-semibold opacity-70">
+          Menu items load ho rahe hain.
+        </p>
       </section>
     );
   }
 
-  return (
-    <>
-      {visibleCategories.map((category) => {
-        const popularCategory = isPopularCategory(category);
+  if (products.length === 0) {
+    return (
+      <section className="mx-auto max-w-[1600px] px-4 py-10 text-black dark:text-white">
+        <h2 className="text-2xl font-black">No menu products found</h2>
+        <p className="mt-2 text-sm font-semibold">
+          Products empty aa rahi hain. API response mein products/menuProducts check karo.
+        </p>
+      </section>
+    );
+  }
 
-        const sectionProducts = popularCategory
-          ? products.filter((product) => isProductPopular(product))
-          : products.filter((product) => productBelongsToCategory(product, category));
+  if (visibleCategories.length === 0) {
+    return (
+      <MenuSection
+        id="all-menu"
+        title="Menu"
+        subtitle=""
+        products={products}
+      />
+    );
+  }
 
-        if (!sectionProducts.length) {
-          return <EmptyCategorySection key={category.id} category={category} />;
-        }
+  const renderedSections = visibleCategories
+    .map((category) => {
+      const sectionProducts = isPopularCategory(category)
+        ? products.filter((product) => isProductPopular(product))
+        : products.filter((product) => productBelongsToCategory(product, category));
 
-        return (
-          <MenuSection
-            key={category.id}
-            id={getCategorySectionId(category)}
-            title={category.name}
-            subtitle={category.description || ""}
-            products={sectionProducts}
-          />
-        );
-      })}
-    </>
-  );
+      if (sectionProducts.length === 0) {
+        return null;
+      }
+
+      const sectionId = getCategoryKey(category);
+
+      return (
+        <MenuSection
+          key={sectionId}
+          id={sectionId}
+          title={getCategoryTitle(category)}
+          subtitle={category.description || ""}
+          products={sectionProducts}
+        />
+      );
+    })
+    .filter(Boolean);
+
+  if (renderedSections.length === 0) {
+    return (
+      <MenuSection
+        id="all-menu"
+        title="Menu"
+        subtitle=""
+        products={products}
+      />
+    );
+  }
+
+  return <>{renderedSections}</>;
 }
