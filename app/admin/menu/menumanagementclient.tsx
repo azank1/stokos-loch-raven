@@ -492,7 +492,7 @@ export default function MenuManagementClient({
     }
   };
 
-  if (!mounted || !isLoaded) {
+if (!mounted) {
     return (
       <div className="w-full space-y-5">
         <section className="rounded-[30px] bg-green-700 p-6 text-white md:p-8">

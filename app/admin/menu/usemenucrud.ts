@@ -1502,52 +1502,55 @@ export function useMenuCrud(initialData?: MenuCrudInitialData) {
     safeArray<UpsellRule>(initialData?.upsellRules).map(normalizeUpsell)
   );
 
-  const [isLoaded, setIsLoaded] = useState(hasInitialData);
+  // Important: true rakho taake MenuManagementClient full loading screen na dikhaye
+  const [isLoaded, setIsLoaded] = useState(true);
 
   const firstLoadDone = useRef(hasInitialData);
-  const backgroundRefreshStarted = useRef(false);
+  const isLoadingRef = useRef(false);
 
   const loadMenu = useCallback(
     async (options: { silent?: boolean } = {}) => {
-      const shouldShowLoader = !firstLoadDone.current && !options.silent;
+      if (isLoadingRef.current) return;
 
-      if (shouldShowLoader) {
-        setIsLoaded(false);
+      isLoadingRef.current = true;
+
+      try {
+        // Products ko sab se pehle load karo
+        const productsData = await apiGet<Product>("products");
+
+        setProducts(productsData.map(normalizeProduct));
+
+        firstLoadDone.current = true;
+        setIsLoaded(true);
+
+        // Baqi data background mein parallel load hoga
+        const [categoriesData, modifiersData, upsellsData] = await Promise.all([
+          apiGet<Category>("categories"),
+          apiGet<ModifierGroup>("modifier-groups"),
+          apiGet<UpsellRule>("upsells"),
+        ]);
+
+        setCategories(
+          sortBySortOrder(
+            categoriesData.map(normalizeCategory) as Category[]
+          )
+        );
+
+        setModifierGroups(modifiersData.map(normalizeModifier));
+        setUpsellRules(upsellsData.map(normalizeUpsell));
+      } catch (error) {
+        console.error("Menu load failed:", error);
+        setIsLoaded(true);
+      } finally {
+        isLoadingRef.current = false;
       }
-
-      const menuData = await apiGetBootstrap();
-
-      setProducts(menuData.products.map(normalizeProduct));
-
-      setCategories(
-        sortBySortOrder(
-          menuData.categories.map(normalizeCategory) as Category[]
-        )
-      );
-
-      setModifierGroups(menuData.modifierGroups.map(normalizeModifier));
-      setUpsellRules(menuData.upsellRules.map(normalizeUpsell));
-
-      firstLoadDone.current = true;
-      setIsLoaded(true);
     },
     []
   );
 
   useEffect(() => {
-    if (firstLoadDone.current && !backgroundRefreshStarted.current) {
-      backgroundRefreshStarted.current = true;
-
-      const timer = window.setTimeout(() => {
-        void loadMenu({ silent: true });
-      }, 500);
-
-      return () => window.clearTimeout(timer);
-    }
-
-    void loadMenu();
+    void loadMenu({ silent: true });
   }, [loadMenu]);
-
   const addProduct = async (product: Product) => {
     const tempId = `temp-product-${Date.now()}`;
     const payload = buildProductApiPayload(product);
