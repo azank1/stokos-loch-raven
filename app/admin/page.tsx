@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useAdminBranch } from "@/app/admin/context/branch";
 import {
   Activity,
   AlertTriangle,
@@ -46,12 +47,15 @@ type AdminOrder = {
 };
 
 export default function AdminDashboardPage() {
+  const { branch } = useAdminBranch();
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchOrders = async () => {
     try {
-      const res = await fetch("/api/admin/orders?limit=100");
+      const params = new URLSearchParams({ limit: "100" });
+      if (branch !== "all") params.set("store", branch);
+      const res = await fetch(`/api/admin/orders?${params}`);
       const data = await res.json();
       if (data.success) {
         setOrders(data.orders || []);
@@ -67,7 +71,8 @@ export default function AdminDashboardPage() {
     fetchOrders();
     const interval = setInterval(fetchOrders, 30000);
     return () => clearInterval(interval);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branch]);
 
   const todayOrders = useMemo(() => {
     return orders.filter((order) => isToday(order.createdAt));

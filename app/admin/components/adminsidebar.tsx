@@ -14,6 +14,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { BRANCHES, useAdminBranch } from "@/app/admin/context/branch";
 
 type SidebarItem = {
   label: string;
@@ -52,6 +53,7 @@ const navItems: SidebarItem[] = [
 export default function AdminSidebar({ onClose }: { onClose: () => void }) {
   const pathname = usePathname();
   const { signOut } = useClerk();
+  const { branch, setBranch, branchLabel } = useAdminBranch();
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -76,19 +78,35 @@ export default function AdminSidebar({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
+      {/* Branch selector */}
       <div className="mb-5 rounded-3xl bg-white/10 p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="text-xs font-black uppercase tracking-[0.2em] text-white/50">
-            Store
+            Branch
           </p>
-
           <span className="rounded-full bg-green-400/20 px-3 py-1 text-[10px] font-black uppercase text-green-200">
             Online
           </span>
         </div>
 
-        <p className="text-sm font-black">All Branches</p>
-        <p className="mt-1 text-xs text-white/55">Towson · York · Liberty</p>
+        <p className="mb-2 text-sm font-black">{branchLabel}</p>
+
+        <div className="flex flex-wrap gap-1.5">
+          {BRANCHES.map((b) => (
+            <button
+              key={b.slug}
+              type="button"
+              onClick={() => setBranch(b.slug)}
+              className={`rounded-full px-3 py-1 text-[10px] font-black uppercase transition ${
+                branch === b.slug
+                  ? "bg-white text-green-900"
+                  : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
+              }`}
+            >
+              {b.slug === "all" ? "All" : b.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <nav className="space-y-2">

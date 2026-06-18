@@ -21,6 +21,7 @@ import {
   type OrderStatus,
   type OrderType,
 } from "@/lib/orderstatus";
+import { useAdminBranch } from "@/app/admin/context/branch";
 
 type AdminOrderItem = {
   name?: string;
@@ -76,10 +77,10 @@ const ALL_STATUSES = [
 const PAGE_SIZE = 20;
 
 export default function OrdersDashboard() {
+  const { branch: storeFilter } = useAdminBranch();
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [storeFilter, setStoreFilter] = useState("all");
   const [activeOrder, setActiveOrder] = useState<AdminOrder | null>(null);
   const [notification, setNotification] = useState("");
   const [loading, setLoading] = useState(true);
@@ -300,20 +301,6 @@ export default function OrdersDashboard() {
                 placeholder="Search orders..."
                 className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-400"
               />
-            </div>
-
-            {/* Branch filter */}
-            <div className="mt-3">
-              <select
-                value={storeFilter}
-                onChange={(e) => setStoreFilter(e.target.value)}
-                className="w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm font-black text-zinc-700 outline-none focus:border-green-500"
-              >
-                <option value="all">All Branches</option>
-                <option value="towson">Towson</option>
-                <option value="york">Baltimore — York</option>
-                <option value="liberty">Liberty</option>
-              </select>
             </div>
 
             {/* Status filter */}
