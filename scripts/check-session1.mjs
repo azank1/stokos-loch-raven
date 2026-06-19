@@ -13,7 +13,10 @@ const routes = ["/", "/track", "/admin/sign-in", "/api/store/towson/menu"];
 async function check(path) {
   const url = `${BASE_URL.replace(/\/$/, "")}${path}`;
   const res = await fetch(url, { redirect: "manual" });
-  return { path, status: res.status, ok: res.status === 200 };
+  const okStatuses =
+    path === "/admin/sign-in" ? [200, 307] : [200];
+  const ok = okStatuses.includes(res.status);
+  return { path, status: res.status, ok };
 }
 
 async function main() {

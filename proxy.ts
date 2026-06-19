@@ -15,9 +15,13 @@ const isPublicRoute = createRouteMatcher([
   "/api/promo/validate(.*)",
   "/api/webhooks(.*)",
   "/admin/sign-in(.*)",
+  "/admin/sign-up(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
+  // Public routes first — /admin/sign-in must not require auth (was causing redirect loop)
+  if (isPublicRoute(req)) return NextResponse.next();
+
   if (isAdminRoute(req)) {
     const { userId } = await auth();
 
@@ -56,8 +60,6 @@ export default clerkMiddleware(async (auth, req) => {
 
     return NextResponse.next();
   }
-
-  if (isPublicRoute(req)) return NextResponse.next();
 
   if (isAccountRoute(req)) {
     const { userId } = await auth();
