@@ -26,6 +26,17 @@ type MongoObject = {
   slug?: string;
 };
 
+type StoreConfigLike = MongoObject & {
+  storeId?: unknown;
+  storeSlug?: unknown;
+  store?: unknown;
+  isAvailable?: boolean;
+  available?: boolean;
+  status?: string;
+  categoryName?: unknown;
+  categorySlug?: unknown;
+};
+
 type CategoryRow = {
   category: Category;
   categoryId: string;
@@ -60,6 +71,16 @@ function getCategoryDeleteId(item: unknown) {
     const obj = item as MongoObject;
 
     return String(obj.storeConfigId || obj.configId || "").trim();
+  }
+
+  return "";
+}
+
+function getConfigDeleteId(config: unknown) {
+  if (typeof config === "object" && config !== null) {
+    const obj = config as MongoObject;
+
+    return String(obj.storeConfigId || obj.configId || obj._id || obj.id || "").trim();
   }
 
   return "";
@@ -139,9 +160,7 @@ function isSameStore(
   });
 }
 
-function getStoreName(stores: StoreItem[], item: unknown) {
-  const storeId = getItemStoreId(item);
-
+function getStoreNameFromId(stores: StoreItem[], storeId: string) {
   if (!storeId) return "No Store";
 
   const foundStore = stores.find((store) => {
@@ -152,11 +171,117 @@ function getStoreName(stores: StoreItem[], item: unknown) {
   return foundStore?.name || storeId;
 }
 
+function getStoreName(stores: StoreItem[], item: unknown) {
+  const storeId = getItemStoreId(item);
+
+  if (!storeId) return "No Store";
+
+  return getStoreNameFromId(stores, storeId);
+}
+
+function isActiveStoreConfig(config: StoreConfigLike) {
+  return (
+    config.isAvailable !== false &&
+    config.available !== false &&
+    config.status !== "Inactive"
+  );
+}
+
+function getStoreConfigs(item: unknown): StoreConfigLike[] {
+  if (!item || typeof item !== "object") return [];
+
+  const obj = item as { storeConfigs?: unknown };
+
+  if (!Array.isArray(obj.storeConfigs)) return [];
+
+  return obj.storeConfigs
+    .filter((config): config is StoreConfigLike => {
+      return typeof config === "object" && config !== null;
+    })
+    .filter(isActiveStoreConfig);
+}
+
+function getStoreIdFromConfig(config: StoreConfigLike) {
+  return (
+    normalizeStoreValue(config.storeId) ||
+    normalizeStoreValue(config.storeSlug) ||
+    normalizeStoreValue(config.store)
+  );
+}
+
+function getCategoryStoreIds(category: Category) {
+  const categoryObj = category as Category & {
+    storeIds?: unknown[];
+    selectedStoreIds?: unknown[];
+    storeSlugs?: unknown[];
+    selectedStoreSlugs?: unknown[];
+    stores?: unknown[];
+    selectedStores?: unknown[];
+  };
+
+  const configs = getStoreConfigs(category);
+  const ids: string[] = [];
+
+  function addStoreId(value: unknown) {
+    if (Array.isArray(value)) {
+      value.forEach(addStoreId);
+      return;
+    }
+
+    const storeId = normalizeStoreValue(value);
+
+    if (!storeId || storeId === "all") return;
+    if (ids.includes(storeId)) return;
+
+    ids.push(storeId);
+  }
+
+  if (configs.length) {
+    configs.forEach((config) => addStoreId(getStoreIdFromConfig(config)));
+  } else {
+    addStoreId(categoryObj.storeIds);
+    addStoreId(categoryObj.selectedStoreIds);
+    addStoreId(categoryObj.storeSlugs);
+    addStoreId(categoryObj.selectedStoreSlugs);
+    addStoreId(categoryObj.stores);
+    addStoreId(categoryObj.selectedStores);
+    addStoreId(getItemStoreId(category));
+  }
+
+  return ids;
+}
+
+function productHasStore(product: Product, storeId: string, stores: StoreItem[]) {
+  if (!storeId) return false;
+
+  const configs = getStoreConfigs(product);
+
+  if (configs.length) {
+    return configs.some((config) => {
+      const configStoreId = getStoreIdFromConfig(config);
+
+      return (
+        configStoreId === storeId ||
+        isSameStore(configStoreId, storeId, stores)
+      );
+    });
+  }
+
+  const productStoreId = getItemStoreId(product);
+
+  return (
+    productStoreId === storeId ||
+    isSameStore(productStoreId, storeId, stores)
+  );
+}
+
 function productBelongsToCategory(product: Product, category: Category) {
   const productObj = product as Product & {
     category?: unknown;
     categoryId?: unknown;
     categorySlug?: unknown;
+    categoryName?: unknown;
+    storeConfigs?: unknown;
   };
 
   const categoryObj = category as Category & {
@@ -170,9 +295,24 @@ function productBelongsToCategory(product: Product, category: Category) {
     productObj.categoryId,
     productObj.category,
     productObj.categorySlug,
+    productObj.categoryName,
   ]
     .map((value) => normalizeValue(value))
     .filter(Boolean);
+
+  const productConfigs = getStoreConfigs(product);
+
+  productConfigs.forEach((config) => {
+    productCategoryValues.push(
+      ...[
+        config.categoryId,
+        config.categoryName,
+        config.categorySlug,
+      ]
+        .map((value) => normalizeValue(value))
+        .filter(Boolean)
+    );
+  });
 
   const categoryValues = [
     categoryObj.categoryId,
@@ -192,18 +332,108 @@ function productBelongsToCategory(product: Product, category: Category) {
 function getCategoryProductsCount(
   category: Category,
   products: Product[],
-  stores: StoreItem[]
+  stores: StoreItem[],
+  storeIdOverride = ""
 ) {
-  const categoryStoreId = getItemStoreId(category);
+  const categoryStoreId = storeIdOverride || getItemStoreId(category);
+
+  if (!categoryStoreId) return 0;
 
   return products.filter((product) => {
-    const productStoreId = getItemStoreId(product);
-
     return (
-      isSameStore(productStoreId, categoryStoreId, stores) &&
+      productHasStore(product, categoryStoreId, stores) &&
       productBelongsToCategory(product, category)
     );
   }).length;
+}
+
+function buildCategoryRows(
+  category: Category,
+  products: Product[],
+  stores: StoreItem[],
+  fallback: string,
+  selectedStoreId = "all"
+): CategoryRow[] {
+  const categoryId = getItemId(category, fallback);
+  const configs = getStoreConfigs(category);
+  const targetStoreId =
+    selectedStoreId && selectedStoreId !== "all" ? selectedStoreId : "";
+
+  const rows: CategoryRow[] = [];
+
+  if (configs.length) {
+    configs.forEach((config, index) => {
+      const storeId = getStoreIdFromConfig(config);
+
+      if (!storeId) return;
+
+      if (
+        targetStoreId &&
+        storeId !== targetStoreId &&
+        !isSameStore(storeId, targetStoreId, stores)
+      ) {
+        return;
+      }
+
+      rows.push({
+        category,
+        categoryId,
+        deleteId: getConfigDeleteId(config),
+        storeId,
+        storeName: getStoreNameFromId(stores, storeId),
+        productsCount: getCategoryProductsCount(category, products, stores, storeId),
+      });
+    });
+  }
+
+  if (!rows.length) {
+    const storeIds = getCategoryStoreIds(category);
+
+    storeIds.forEach((storeId) => {
+      if (
+        targetStoreId &&
+        storeId !== targetStoreId &&
+        !isSameStore(storeId, targetStoreId, stores)
+      ) {
+        return;
+      }
+
+      rows.push({
+        category,
+        categoryId,
+        deleteId: getCategoryDeleteId(category),
+        storeId,
+        storeName: getStoreNameFromId(stores, storeId),
+        productsCount: getCategoryProductsCount(category, products, stores, storeId),
+      });
+    });
+  }
+
+  if (!rows.length) {
+    const storeName = getStoreName(stores, category);
+    const storeId = getItemStoreId(category) || storeName;
+
+    rows.push({
+      category,
+      categoryId,
+      deleteId: getCategoryDeleteId(category),
+      storeId,
+      storeName,
+      productsCount: getCategoryProductsCount(category, products, stores, storeId),
+    });
+  }
+
+  const uniqueRows = new Map<string, CategoryRow>();
+
+  rows.forEach((row) => {
+    const key = row.storeId || row.storeName;
+
+    if (!uniqueRows.has(key)) {
+      uniqueRows.set(key, row);
+    }
+  });
+
+  return Array.from(uniqueRows.values());
 }
 
 function RowActionButtons({
@@ -260,6 +490,14 @@ function StoreDeleteBadge({
   );
 }
 
+function StoreBadge({ storeName }: { storeName: string }) {
+  return (
+    <span className="rounded-full bg-green-50 px-3 py-1.5 text-xs font-black text-green-800">
+      {storeName}
+    </span>
+  );
+}
+
 function buildGroupedCategories(
   categories: Category[],
   products: Product[],
@@ -271,25 +509,17 @@ function buildGroupedCategories(
     .slice()
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
     .forEach((category, index) => {
-      const categoryId = getItemId(category, `${category.name}-${index}`);
-      const deleteId = getCategoryDeleteId(category);
-
       const key = String(category.name || "untitled-category")
         .trim()
         .toLowerCase();
 
-      const productsCount = getCategoryProductsCount(category, products, stores);
-      const storeName = getStoreName(stores, category);
-      const storeId = getItemStoreId(category) || storeName;
-
-      const row: CategoryRow = {
+      const rows = buildCategoryRows(
         category,
-        categoryId,
-        deleteId,
-        storeId,
-        storeName,
-        productsCount,
-      };
+        products,
+        stores,
+        `${category.name}-${index}`,
+        "all"
+      );
 
       const existing = map.get(key);
 
@@ -297,17 +527,31 @@ function buildGroupedCategories(
         map.set(key, {
           key,
           name: category.name || "Untitled Category",
-          rows: [row],
-          totalProducts: productsCount,
+          rows: [],
+          totalProducts: 0,
           sortOrders: [Number(category.sortOrder || 0)],
         });
-
-        return;
+      } else {
+        existing.sortOrders.push(Number(category.sortOrder || 0));
       }
 
-      existing.rows.push(row);
-      existing.totalProducts += productsCount;
-      existing.sortOrders.push(Number(category.sortOrder || 0));
+      const group = map.get(key);
+
+      if (!group) return;
+
+      rows.forEach((row) => {
+        const alreadyExists = group.rows.some((existingRow) => {
+          return (
+            existingRow.storeId === row.storeId ||
+            isSameStore(existingRow.storeId, row.storeId, stores)
+          );
+        });
+
+        if (alreadyExists) return;
+
+        group.rows.push(row);
+        group.totalProducts += row.productsCount;
+      });
     });
 
   return Array.from(map.values()).sort((a, b) => {
@@ -393,6 +637,7 @@ export default function CategoryTable({
   stores = [],
   hideEdit = false,
   hideActions = false,
+  selectedStoreId = "all",
   onEdit,
   onDelete,
 }: {
@@ -401,6 +646,7 @@ export default function CategoryTable({
   stores?: StoreItem[];
   hideEdit?: boolean;
   hideActions?: boolean;
+  selectedStoreId?: string;
   onEdit: (category: Category) => void;
   onDelete: (id: string) => void;
 }) {
@@ -515,20 +761,29 @@ export default function CategoryTable({
                     `${category.name}-${startIndex + index}`
                   );
 
-                  const deleteId = getCategoryDeleteId(category);
-                  const storeName = getStoreName(stores, category);
-
-                  const categoryProductsCount = getCategoryProductsCount(
+                  const rows = buildCategoryRows(
                     category,
                     products,
-                    stores
+                    stores,
+                    `${category.name}-${startIndex + index}`,
+                    selectedStoreId
+                  );
+
+                  const primaryRow = rows[0];
+                  const deleteId =
+                    primaryRow?.deleteId || getCategoryDeleteId(category);
+                  const storeName = primaryRow?.storeName || getStoreName(stores, category);
+
+                  const categoryProductsCount = rows.reduce(
+                    (total, row) => total + row.productsCount,
+                    0
                   );
 
                   return (
                     <tr
                       key={`${
                         deleteId || categoryId
-                      }-${getItemStoreId(category) || storeName}-${
+                      }-${primaryRow?.storeId || getItemStoreId(category) || storeName}-${
                         startIndex + index
                       }`}
                       className="transition hover:bg-green-50/50"
@@ -540,9 +795,14 @@ export default function CategoryTable({
                       </td>
 
                       <td className="px-5 py-5">
-                        <span className="rounded-full bg-green-50 px-3 py-1.5 text-xs font-black text-green-800">
-                          {storeName}
-                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {rows.map((row, rowIndex) => (
+                            <StoreBadge
+                              key={`${row.storeId}-${rowIndex}`}
+                              storeName={row.storeName}
+                            />
+                          ))}
+                        </div>
                       </td>
 
                       <td className="px-5 py-5 text-sm font-black">

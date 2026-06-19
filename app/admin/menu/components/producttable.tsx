@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type {
   Category,
   Product,
@@ -61,6 +61,8 @@ type UpsellDisplayItem = {
   name: string;
   price: number | null;
 };
+
+const PAGE_SIZE = 20;
 
 function getItemId(item: unknown, fallback: string) {
   if (typeof item === "object" && item !== null) {
@@ -186,7 +188,6 @@ function getVisibleStoreConfigs(
   selectedStoreId?: string
 ): ProductStoreConfig[] {
   const configs = getStoreConfigs(product);
-
   const activeConfigs = configs.filter(isStoreConfigVisible);
 
   const visibleConfigs =
@@ -221,8 +222,14 @@ function getVisibleStoreConfigs(
       upsellName: source.upsellName,
       isAvailable: true,
       available: true,
-      isPopular: cleanBoolean(source.isPopular, cleanBoolean(source.showInPopular)),
-      showInPopular: cleanBoolean(source.isPopular, cleanBoolean(source.showInPopular)),
+      isPopular: cleanBoolean(
+        source.isPopular,
+        cleanBoolean(source.showInPopular)
+      ),
+      showInPopular: cleanBoolean(
+        source.isPopular,
+        cleanBoolean(source.showInPopular)
+      ),
       status: source.status,
       sortOrder: source.sortOrder,
     },
@@ -558,17 +565,6 @@ function getLimitedStoreLabels(storeLabels: string[]) {
   };
 }
 
-function getPopularSummary(configs: ProductStoreConfig[]) {
-  const count = configs.filter((config) =>
-    cleanBoolean(config.isPopular, cleanBoolean(config.showInPopular))
-  ).length;
-
-  if (!count) return "Normal";
-  if (count === configs.length) return "Popular";
-
-  return `${count} popular`;
-}
-
 function getConfigWarnings(
   config: ProductStoreConfig,
   categoryName: string,
@@ -606,10 +602,44 @@ export default function ProductTable({
   const [expandedProductId, setExpandedProductId] = useState<string | null>(
     null
   );
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const totalProducts = products.length;
+  const totalPages = Math.max(Math.ceil(totalProducts / PAGE_SIZE), 1);
+  const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
+
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
+    return products.slice(startIndex, startIndex + PAGE_SIZE);
+  }, [products, safeCurrentPage]);
 
   const productCountLabel = useMemo(() => {
-    return `${products.length} product${products.length === 1 ? "" : "s"}`;
-  }, [products.length]);
+    return `${totalProducts} product${totalProducts === 1 ? "" : "s"}`;
+  }, [totalProducts]);
+
+  const showingStart = totalProducts
+    ? (safeCurrentPage - 1) * PAGE_SIZE + 1
+    : 0;
+
+  const showingEnd = Math.min(safeCurrentPage * PAGE_SIZE, totalProducts);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setExpandedProductId(null);
+  }, [selectedStoreId, totalProducts]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+      setExpandedProductId(null);
+    }
+  }, [currentPage, totalPages]);
+
+  function goToPage(page: number) {
+    const nextPage = Math.min(Math.max(page, 1), totalPages);
+    setCurrentPage(nextPage);
+    setExpandedProductId(null);
+  }
 
   if (!products.length) return <EmptyBox message="No products found." />;
 
@@ -620,7 +650,8 @@ export default function ProductTable({
           <div>
             <h3 className="text-lg font-black text-zinc-950">Products</h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Summary table with compact store-wise details for review.
+              Compact product list. Open details for modifiers, popular status,
+              upsells, and store comparison.
             </p>
           </div>
 
@@ -631,14 +662,12 @@ export default function ProductTable({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1150px] text-left">
+        <table className="w-full min-w-[950px] text-left">
           <thead className="border-b border-zinc-200 bg-white">
             <tr>
               <TableHead>Product</TableHead>
               <TableHead>Stores</TableHead>
               <TableHead>Price</TableHead>
-              <TableHead>Modifiers</TableHead>
-              <TableHead>Popular</TableHead>
               <TableHead>Details</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Action</TableHead>
@@ -646,10 +675,12 @@ export default function ProductTable({
           </thead>
 
           <tbody className="divide-y divide-zinc-100">
-            {products.map((product, index) => {
+            {paginatedProducts.map((product, index) => {
+              const absoluteIndex = (safeCurrentPage - 1) * PAGE_SIZE + index;
+
               const productId = getItemId(
                 product,
-                `${product.name || "product"}-${index}`
+                `${product.name || "product"}-${absoluteIndex}`
               );
 
               const configs = getVisibleStoreConfigs(
@@ -670,8 +701,6 @@ export default function ProductTable({
               const isExpanded = expandedProductId === productId;
               const statusSummary = getProductStatusSummary(configs, product);
               const priceSummary = getPriceRangeLabel(configs);
-              const modifierSummary = getModifierSummary(configs[0] || product);
-              const popularSummary = getPopularSummary(configs);
 
               return (
                 <Fragment key={productId}>
@@ -735,24 +764,6 @@ export default function ProductTable({
                     </td>
 
                     <td className="px-5 py-5 align-middle">
-                      <span className="inline-flex max-w-[260px] items-center rounded-full border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-black text-green-800">
-                        <span className="truncate">{modifierSummary}</span>
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-5 align-middle">
-                      {popularSummary === "Normal" ? (
-                        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-black text-zinc-500">
-                          Normal
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-pink-50 px-3 py-1.5 text-xs font-black text-pink-700">
-                          {popularSummary}
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="px-5 py-5 align-middle">
                       <button
                         type="button"
                         onClick={() =>
@@ -784,7 +795,7 @@ export default function ProductTable({
 
                   {isExpanded && (
                     <tr className="bg-zinc-50/70">
-                      <td colSpan={8} className="px-5 py-4">
+                      <td colSpan={6} className="px-5 py-4">
                         <div className="rounded-[22px] border border-zinc-200 bg-white shadow-sm">
                           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 px-5 py-4">
                             <div>
@@ -794,7 +805,7 @@ export default function ProductTable({
 
                               <p className="mt-1 text-xs font-semibold text-zinc-500">
                                 Review category, prices, sizes, modifiers,
-                                upsell, and issues in one compact table.
+                                upsell, popular status, and issues.
                               </p>
                             </div>
 
@@ -884,10 +895,6 @@ export default function ProductTable({
                                         <p className="font-black text-zinc-950">
                                           {storeName}
                                         </p>
-
-                                        {/* <p className="mt-1 text-xs font-semibold text-zinc-400">
-                                          Config #{configIndex + 1}
-                                        </p> */}
                                       </td>
 
                                       <td className="px-5 py-4">
@@ -955,7 +962,10 @@ export default function ProductTable({
                                       </td>
 
                                       <td className="px-5 py-4">
-                                        {cleanBoolean(config.isPopular, cleanBoolean(config.showInPopular)) ? (
+                                        {cleanBoolean(
+                                          config.isPopular,
+                                          cleanBoolean(config.showInPopular)
+                                        ) ? (
                                           <span className="rounded-full bg-pink-50 px-3 py-1.5 text-xs font-black text-pink-700">
                                             Popular
                                           </span>
@@ -984,6 +994,59 @@ export default function ProductTable({
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-zinc-50/70 px-5 py-4">
+        <p className="text-xs font-bold text-zinc-500">
+          Showing{" "}
+          <span className="font-black text-zinc-900">
+            {showingStart}–{showingEnd}
+          </span>{" "}
+          of <span className="font-black text-zinc-900">{totalProducts}</span>{" "}
+          products
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => goToPage(1)}
+            disabled={safeCurrentPage === 1}
+            className="rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            First
+          </button>
+
+          <button
+            type="button"
+            onClick={() => goToPage(safeCurrentPage - 1)}
+            disabled={safeCurrentPage === 1}
+            className="rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Previous
+          </button>
+
+          <span className="rounded-full bg-white px-4 py-2 text-xs font-black text-zinc-700 ring-1 ring-zinc-200">
+            Page {safeCurrentPage} of {totalPages}
+          </span>
+
+          <button
+            type="button"
+            onClick={() => goToPage(safeCurrentPage + 1)}
+            disabled={safeCurrentPage === totalPages}
+            className="rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Next
+          </button>
+
+          <button
+            type="button"
+            onClick={() => goToPage(totalPages)}
+            disabled={safeCurrentPage === totalPages}
+            className="rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Last
+          </button>
+        </div>
       </div>
     </div>
   );
