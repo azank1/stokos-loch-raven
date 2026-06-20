@@ -28,12 +28,12 @@ export default function ClerkAuthControls({
   return (
     <div className="flex items-center gap-2">
       <Show when="signed-out">
-        <SignInButton mode="modal">
+        <SignInButton mode="modal" forceRedirectUrl={variant === "admin" ? "/admin" : undefined}>
           <button type="button" className={signInClass}>
             Sign In
           </button>
         </SignInButton>
-        <SignUpButton mode="modal">
+        <SignUpButton mode="modal" forceRedirectUrl={variant === "admin" ? "/admin" : undefined}>
           <button type="button" className={signUpClass}>
             Sign Up
           </button>
