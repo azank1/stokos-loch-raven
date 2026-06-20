@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import type {
   ModifierGroup,
   ModifierGroupAssignment,
   ModifierOption,
 } from "../types";
 import { ActionButtons, EmptyBox } from "./ui";
+import Pagination from "@/components/pagination";
 
 type StoreItem = {
   _id?: string;
@@ -28,6 +30,7 @@ type MongoObject = {
 
 const ASSIGNMENT_PREVIEW_LIMIT = 3;
 const OPTION_PREVIEW_LIMIT = 5;
+const PAGE_SIZE = 12;
 
 function getModifierId(group: MongoModifierGroup) {
   return String(group._id || group.id || "").trim();
@@ -136,7 +139,18 @@ export default function ModifierGrid({
     ? (modifierGroups as MongoModifierGroup[])
     : [];
 
-  if (!safeModifierGroups.length) {
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const totalGroups = safeModifierGroups.length;
+  const totalPages = Math.max(1, Math.ceil(totalGroups / PAGE_SIZE));
+  const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
+  const paginatedGroups = safeModifierGroups.slice(
+    startIndex,
+    startIndex + PAGE_SIZE
+  );
+
+  if (!totalGroups) {
     return <EmptyBox message="No modifier groups found." />;
   }
 
@@ -154,8 +168,8 @@ export default function ModifierGrid({
           </div>
 
           <span className="rounded-full bg-zinc-100 px-4 py-2 text-xs font-black text-zinc-700">
-            {safeModifierGroups.length} group
-            {safeModifierGroups.length === 1 ? "" : "s"}
+            {totalGroups} group
+            {totalGroups === 1 ? "" : "s"}
           </span>
         </div>
       </div>
@@ -174,7 +188,7 @@ export default function ModifierGrid({
           </thead>
 
           <tbody className="divide-y divide-zinc-100">
-            {safeModifierGroups.map((group, index) => {
+            {paginatedGroups.map((group, index) => {
               const groupId = getModifierId(group);
               const groupKey = getModifierKey(group, `${group.name}-${index}`);
 
@@ -382,6 +396,15 @@ export default function ModifierGrid({
           </tbody>
         </table>
       </div>
+
+      <Pagination
+        currentPage={safeCurrentPage}
+        totalPages={totalPages}
+        totalItems={totalGroups}
+        pageSize={PAGE_SIZE}
+        itemLabel="modifier groups"
+        onPageChange={setCurrentPage}
+      />
     </div>
   );
 }

@@ -1,8 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { Edit2, ImageIcon, Trash2 } from "lucide-react";
 
 import type { Product, UpsellRule, UpsellStatus } from "../types";
+import Pagination from "@/components/pagination";
+
+const PAGE_SIZE = 12;
 
 type StoreItem = {
   _id?: string;
@@ -118,7 +122,15 @@ export default function UpsellTable({
   onEdit,
   onDelete,
 }: UpsellTableProps) {
-  if (!upsellRules.length) {
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const totalUpsells = upsellRules.length;
+  const totalPages = Math.max(1, Math.ceil(totalUpsells / PAGE_SIZE));
+  const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
+  const paginatedUpsells = upsellRules.slice(startIndex, startIndex + PAGE_SIZE);
+
+  if (!totalUpsells) {
     return (
       <div className="rounded-3xl border border-dashed border-zinc-300 bg-white p-10 text-center">
         <h3 className="text-lg font-black text-zinc-950">No upsells found</h3>
@@ -143,7 +155,7 @@ export default function UpsellTable({
           </thead>
 
           <tbody className="divide-y divide-zinc-100">
-            {upsellRules.map((upsell) => {
+            {paginatedUpsells.map((upsell) => {
               const id = getSafeId(upsell);
               const configs = getStoreConfigs(upsell);
               const activeConfigs = configs.filter(
@@ -267,6 +279,15 @@ export default function UpsellTable({
           </tbody>
         </table>
       </div>
+
+      <Pagination
+        currentPage={safeCurrentPage}
+        totalPages={totalPages}
+        totalItems={totalUpsells}
+        pageSize={PAGE_SIZE}
+        itemLabel="upsells"
+        onPageChange={setCurrentPage}
+      />
     </div>
   );
 }
