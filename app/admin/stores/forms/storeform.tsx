@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { DayHours, StoreItem } from "../page";
 import BranchMapPicker from "../components/branchmappicker";
+import { formatHoursLines, formatHoursText } from "@/lib/store-hours";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -28,7 +29,6 @@ type StoreFormState = {
   name: string;
   location: string;
   phone: string;
-  openingHours: string;
   deliveryFee: string;
   taxRate: string;
   minimumOrder: string;
@@ -43,7 +43,6 @@ const emptyForm: StoreFormState = {
   name: "",
   location: "",
   phone: "",
-  openingHours: "",
   deliveryFee: "",
   taxRate: "",
   minimumOrder: "",
@@ -81,7 +80,6 @@ export default function StoreForm({
         name: editingStore.name,
         location: editingStore.location,
         phone: editingStore.phone,
-        openingHours: editingStore.openingHours,
         deliveryFee: String(editingStore.deliveryFee ?? ""),
         taxRate: String(editingStore.taxRate ?? ""),
         minimumOrder: String(editingStore.minimumOrder ?? ""),
@@ -120,12 +118,7 @@ export default function StoreForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (
-      !form.name.trim() ||
-      !form.location.trim() ||
-      !form.phone.trim() ||
-      !form.openingHours.trim()
-    ) {
+    if (!form.name.trim() || !form.location.trim() || !form.phone.trim()) {
       alert("Please fill all required fields.");
       return;
     }
@@ -149,7 +142,7 @@ export default function StoreForm({
           slug: createSlug(form.name),
           location: form.location,
           phone: form.phone,
-          openingHours: form.openingHours,
+          openingHours: formatHoursText(form.hours),
           deliveryFee: form.deliveryFee !== "" ? parseFloat(form.deliveryFee) : 0,
           taxRate: form.taxRate !== "" ? parseFloat(form.taxRate) : 0,
           minimumOrder: form.minimumOrder !== "" ? parseFloat(form.minimumOrder) : 0,
@@ -242,20 +235,7 @@ export default function StoreForm({
           />
         </div>
 
-        <div>
-          <label className="mb-1.5 block text-sm font-bold text-zinc-700">
-            Opening Hours
-          </label>
-          <textarea
-            value={form.openingHours}
-            onChange={(e) => updateField("openingHours", e.target.value)}
-            placeholder="Daily: 11am - 11:30pm"
-            rows={4}
-            className="w-full resize-none rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327]"
-          />
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
             <label className="mb-1.5 block text-sm font-bold text-zinc-700">
               Delivery Fee ($)
@@ -326,7 +306,7 @@ export default function StoreForm({
             }
           />
 
-          <div className="mt-3 grid grid-cols-3 gap-3">
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1.5 block text-xs font-bold text-zinc-700">
                 Latitude
@@ -395,30 +375,32 @@ export default function StoreForm({
 
           <div className="space-y-2">
             {form.hours.map((day, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="w-10 text-xs font-black uppercase text-zinc-600">
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <span className="w-10 shrink-0 text-xs font-black uppercase text-zinc-600">
                   {DAY_LABELS[i]}
                 </span>
 
-                <input
-                  type="time"
-                  value={day.open}
-                  disabled={day.closed}
-                  onChange={(e) => updateDayHours(i, { open: e.target.value })}
-                  className="flex-1 rounded-xl border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327] disabled:bg-zinc-100 disabled:text-zinc-400"
-                />
+                <div className="flex min-w-[200px] flex-1 items-center gap-2">
+                  <input
+                    type="time"
+                    value={day.open}
+                    disabled={day.closed}
+                    onChange={(e) => updateDayHours(i, { open: e.target.value })}
+                    className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327] disabled:bg-zinc-100 disabled:text-zinc-400"
+                  />
 
-                <span className="text-xs font-bold text-zinc-400">to</span>
+                  <span className="shrink-0 text-xs font-bold text-zinc-400">to</span>
 
-                <input
-                  type="time"
-                  value={day.close}
-                  disabled={day.closed}
-                  onChange={(e) => updateDayHours(i, { close: e.target.value })}
-                  className="flex-1 rounded-xl border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327] disabled:bg-zinc-100 disabled:text-zinc-400"
-                />
+                  <input
+                    type="time"
+                    value={day.close}
+                    disabled={day.closed}
+                    onChange={(e) => updateDayHours(i, { close: e.target.value })}
+                    className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-2 py-2 text-sm font-semibold text-zinc-900 outline-none transition focus:border-[#DA3327] disabled:bg-zinc-100 disabled:text-zinc-400"
+                  />
+                </div>
 
-                <label className="flex items-center gap-1 text-xs font-bold text-zinc-600">
+                <label className="flex shrink-0 items-center gap-1 text-xs font-bold text-zinc-600">
                   <input
                     type="checkbox"
                     checked={day.closed}
@@ -429,6 +411,17 @@ export default function StoreForm({
                   Closed
                 </label>
               </div>
+            ))}
+          </div>
+
+          <div className="mt-3 rounded-xl bg-zinc-50 p-3">
+            <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-zinc-400">
+              Displayed to customers as
+            </p>
+            {formatHoursLines(form.hours).map((line) => (
+              <p key={line} className="text-xs font-semibold text-zinc-700">
+                {line}
+              </p>
             ))}
           </div>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -10,6 +11,8 @@ import {
   Phone,
   Store,
 } from "lucide-react";
+import { formatHoursLines, isStoreOpenNow } from "@/lib/store-hours";
+import type { DayHours } from "@/lib/time-slots";
 
 type StoreLocation = {
   name: string;
@@ -65,6 +68,45 @@ export default function LocationStoreCards({
   const category = searchParams.get("category");
   const deal = searchParams.get("deal");
 
+  // Live hours come from the DB (what the admin edits); the hardcoded
+  // schedule/hoursLabel above is a fallback for un-migrated stores.
+  const [dbHours, setDbHours] = useState<
+    Record<string, { hours: DayHours[]; timezone: string }>
+  >({});
+
+  useEffect(() => {
+    let active = true;
+
+    Promise.all(
+      STORES.map((s) =>
+        fetch(`/api/store/${s.slug}/config`)
+          .then((r) => r.json())
+          .then((data) => ({ slug: s.slug, data }))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      if (!active) return;
+      const map: Record<string, { hours: DayHours[]; timezone: string }> = {};
+      for (const res of results) {
+        if (
+          res?.data?.success &&
+          Array.isArray(res.data.hours) &&
+          res.data.hours.length === 7
+        ) {
+          map[res.slug] = {
+            hours: res.data.hours,
+            timezone: res.data.timezone || "America/New_York",
+          };
+        }
+      }
+      setDbHours(map);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const buildStoreHref = (slug: string) => {
     const params = new URLSearchParams();
 
@@ -118,7 +160,14 @@ export default function LocationStoreCards({
           {STORES.filter(store => 
             !availableStoreSlugs || availableStoreSlugs.length === 0 || availableStoreSlugs.includes(store.slug)
           ).map((store) => {
-            const openNow = isStoreOpen(store.schedule);
+            const db = dbHours[store.slug];
+            const openNow = db
+              ? isStoreOpenNow(db.hours, db.timezone)
+              : isStoreOpen(store.schedule);
+            const hoursLines =
+              db && db.hours.length
+                ? formatHoursLines(db.hours)
+                : store.hoursLabel.split("\n");
 
             return (
               <article
@@ -172,7 +221,7 @@ export default function LocationStoreCards({
                     <Clock className="mt-[2px] h-[17px] w-[17px] shrink-0 text-[#DA3327] md:h-[15px] md:w-[15px] lg:h-[17px] lg:w-[17px]" />
 
                     <div className="space-y-2 text-[14px] font-medium leading-none md:text-[12px] lg:text-[15px]">
-                      {store.hoursLabel.split("\n").map((line) => (
+                      {hoursLines.map((line) => (
                         <p key={line}>{line}</p>
                       ))}
                     </div>
