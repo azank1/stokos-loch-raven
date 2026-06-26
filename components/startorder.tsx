@@ -15,6 +15,7 @@ export default function StartOrder() {
   const store = STORES.find((item) => item.slug === slug) || STORES[0];
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [orderTypeForced, setOrderTypeForced] = useState(false);
   const [orderType, setOrderType] = useState<OrderType | null>(null);
   const [address, setAddress] = useState("");
   const [day, setDay] = useState("Today");
@@ -32,6 +33,8 @@ export default function StartOrder() {
       localStorage.removeItem("stokos_order_day");
       localStorage.removeItem("stokos_order_time");
       localStorage.removeItem("stokos_order_store");
+      setOrderTypeForced(true);
+      setModalOpen(true);
       return;
     }
 
@@ -40,10 +43,15 @@ export default function StartOrder() {
     const savedDay = localStorage.getItem("stokos_order_day");
     const savedTime = localStorage.getItem("stokos_order_time");
 
-    if (savedType) setOrderType(savedType);
-    if (savedAddress) setAddress(savedAddress);
-    if (savedDay) setDay(savedDay);
-    if (savedTime) setTime(savedTime);
+    if (savedType) {
+      setOrderType(savedType);
+      if (savedAddress) setAddress(savedAddress);
+      if (savedDay) setDay(savedDay);
+      if (savedTime) setTime(savedTime);
+    } else {
+      setOrderTypeForced(true);
+      setModalOpen(true);
+    }
   }, [store.slug]);
 
   useEffect(() => {
@@ -57,20 +65,6 @@ export default function StartOrder() {
       window.removeEventListener("stokos-open-start-order", openStartOrder);
     };
   }, []);
-
-  const openModal = (type: OrderType) => {
-    setOrderType(type);
-
-    if (type === "delivery" && store.deliveryOrderLaterOnly) {
-      setDay("");
-      setTime("");
-    } else {
-      setDay("Today");
-      setTime("ASAP");
-    }
-
-    setModalOpen(true);
-  };
 
   const handleOrderTypeChange = (type: OrderType) => {
     setOrderType(type);
@@ -103,6 +97,7 @@ export default function StartOrder() {
     }
 
     window.dispatchEvent(new Event("stokos-order-updated"));
+    setOrderTypeForced(false);
     setModalOpen(false);
   };
 
@@ -111,13 +106,6 @@ export default function StartOrder() {
     (orderType === "delivery" &&
       address.trim().length > 0 &&
       (!isOrderLaterOnly || (day && time)));
-
-  const mainButtonClass = (type: OrderType) =>
-    `flex h-9 flex-1 items-center justify-center rounded-full px-3 text-[11px] font-black uppercase text-white shadow-md transition active:scale-[0.98] sm:h-10 sm:text-xs md:h-14 md:px-8 md:text-base ${
-      orderType === type
-        ? "bg-green-600 hover:bg-green-900"
-        : "bg-[#DA3327] hover:bg-[#c52d22]"
-    }`;
 
   const modalButtonClass = (type: OrderType) =>
     `flex min-h-[42px] items-center justify-between rounded border px-3 py-2 text-left font-black transition ${
@@ -128,47 +116,19 @@ export default function StartOrder() {
 
   return (
     <>
-      <section className="w-full bg-white py-3 dark:bg-black md:py-6">
-        <div className="mx-auto flex max-w-[1600px] flex-col items-start gap-3 px-4 sm:px-5 md:px-6 lg:px-8 xl:px-10 md:flex-row md:items-center md:gap-8">
-          <h2 className="whitespace-nowrap text-left text-xl font-black uppercase tracking-tight text-black dark:text-white sm:text-2xl md:text-3xl">
-            Start Your Order
-          </h2>
-
-          <div className="flex w-full items-center gap-2 md:flex-1 md:gap-5">
-            <button
-              type="button"
-              onClick={() => openModal("pickup")}
-              className={mainButtonClass("pickup")}
-            >
-              Pickup
-            </button>
-
-            <span className="text-xs font-black uppercase text-black dark:text-white sm:text-sm md:text-lg">
-              OR
-            </span>
-
-            <button
-              type="button"
-              onClick={() => openModal("delivery")}
-              className={mainButtonClass("delivery")}
-            >
-              Delivery
-            </button>
-          </div>
-        </div>
-      </section>
-
       {modalOpen && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-[450px] overflow-hidden rounded-md bg-white shadow-2xl">
             <div className="relative px-6 pt-6 text-center">
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="absolute right-4 top-4 text-zinc-700 hover:text-black"
-              >
-                <X size={24} />
-              </button>
+              {!orderTypeForced && (
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(false)}
+                  className="absolute right-4 top-4 text-zinc-700 hover:text-black"
+                >
+                  <X size={24} />
+                </button>
+              )}
 
               <h3 className="text-xl font-black uppercase text-[#9E1111]">
                 Stoko&apos;s
@@ -177,6 +137,11 @@ export default function StartOrder() {
               <div className="mt-5">
                 <h4 className="text-xl font-black text-black">Stoko&apos;s</h4>
                 <p className="mt-1 text-base text-zinc-700">{store.displayName}</p>
+                {orderTypeForced && (
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Choose how you&apos;d like to receive your order to get started.
+                  </p>
+                )}
               </div>
 
               <div className="mt-4 border-t border-zinc-200" />
@@ -330,11 +295,15 @@ export default function StartOrder() {
                 {!orderType
                   ? "Select Pickup or Delivery"
                   : orderType === "pickup"
-                  ? "Update Your Pickup Order"
+                  ? orderTypeForced
+                    ? "Start Your Pickup Order"
+                    : "Update Your Pickup Order"
                   : !address.trim()
                   ? "Enter Your Delivery Address to Continue"
                   : isOrderLaterOnly && (!day || !time)
                   ? "Select Delivery Date & Time to Continue"
+                  : orderTypeForced
+                  ? "Start Your Delivery Order"
                   : "Update Your Delivery Order"}
               </span>
 

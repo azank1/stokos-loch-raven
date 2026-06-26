@@ -39,9 +39,12 @@ export async function getCartUpsells(
   await connectMongoDB();
 
   const slugKeys = keys.map(slugify).filter(Boolean);
-  const categories = await Category.find({
-    $or: [{ slug: { $in: slugKeys } }, { _id: { $in: keys } }],
-  }).lean();
+  const objectIdKeys = keys.filter((k) => /^[0-9a-f]{24}$/i.test(k));
+  const categoryQuery =
+    objectIdKeys.length > 0
+      ? { $or: [{ slug: { $in: slugKeys } }, { _id: { $in: objectIdKeys } }] }
+      : { slug: { $in: slugKeys } };
+  const categories = await Category.find(categoryQuery).lean();
 
   const resolvedIds = new Set<string>(keys);
   for (const category of categories) {
@@ -69,10 +72,12 @@ export async function getCartUpsells(
     new Set(configs.map((config) => String(config.upsellId || "").trim()).filter(Boolean))
   );
 
-  const rules = await UpsellRule.find({
-    $or: [{ _id: { $in: upsellIds } }, { slug: { $in: upsellIds } }],
-    status: "Active",
-  }).lean();
+  const upsellObjectIds = upsellIds.filter((k) => /^[0-9a-f]{24}$/i.test(k));
+  const rulesQuery =
+    upsellObjectIds.length > 0
+      ? { $or: [{ _id: { $in: upsellObjectIds } }, { slug: { $in: upsellIds } }] }
+      : { slug: { $in: upsellIds } };
+  const rules = await UpsellRule.find({ ...rulesQuery, status: "Active" }).lean();
 
   const ruleByKey = new Map<string, (typeof rules)[number]>();
   for (const rule of rules) {
